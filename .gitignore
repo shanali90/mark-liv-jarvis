@@ -1,0 +1,111 @@
+# ── MARK LIII — what never belongs in the repository ──────────────────────────
+# Everything listed here is created by the app on first run. A fresh clone with
+# none of it present boots straight to the setup screen, which is the intended
+# first experience — so nothing here needs to be committed, and some of it must
+# never be.
+
+# ── Secrets. Committing any of these publishes them. ──────────────────────────
+config/api_keys.json          # your Gemini API key, plus per-plugin credentials
+api_keys.json
+**/api_keys.json
+config/settings.json          # local preferences may include identity/device names
+config/certs/                 # the dashboard's TLS private key and certificate
+**/client_secret*.json
+client_secret*.json
+token*.json
+**/token*.json
+config/voice_profile*
+**/voice_profile*
+voice/enrollment/
+voice/enrollment_data/
+**/enrollment/
+**/enrollment_data/
+*.enrollment
+*.biometric
+config/whatsapp_web/          # a LINKED WhatsApp session — committing it hands
+                              # somebody your WhatsApp account, not just a key
+**/token*.json                # Google OAuth tokens (Gmail / Calendar plugins)
+**/client_secret*.json        # Google OAuth client secrets
+*credentials*.json
+.env
+.env.*
+*.env
+
+# ── Personal data the assistant accumulates about you ─────────────────────────
+memory/long_term.json
+memory/*.db
+memory/*.json
+memory/*.bak
+*.bak
+*.db
+*.sqlite
+*.sqlite3
+audit.jsonl
+**/audit.jsonl
+audit*.jsonl
+browser_profiles/
+**/browser_profiles/
+Browser/
+**/Browser/
+**/User Data/
+**/Firefox/Profiles/
+**/Chrome/
+**/Chromium/
+browser-profile/
+**/browser-profile/
+screenshots/
+**/screenshots/
+
+# ── Python build noise ────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+build/
+dist/
+*.egg-info/
+.eggs/
+
+# ── Virtual environments ──────────────────────────────────────────────────────
+.venv/
+venv/
+env/
+ENV/
+
+# ── Editors and operating systems ─────────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ── Runtime output ────────────────────────────────────────────────────────────
+*.log
+logs/
+
+# Clean-source export exclusions
+diagnostics/
+.mypy_cache/
+*.sqlite*
+memory/trust_policy.json
+config/certs/*.key
+*.key
+*.db
+*.npy
+*.log
+**/token*
+**/client_secret*
+.env
+downloads/
+screenshots/
+diagnostics/runtime-freeze-*.txt
+
+config/api_keys.json
+.env
+*.key
+*.pem
+__pycache__/
+.venv/
+*.db
+logs/

@@ -1,0 +1,4 @@
+# Documentation only; JARVIS does not load this file as a credential store.
+# Set credentials in the environment or with `python scripts/set_key.py`.
+GEMINI_API_KEY=<your-gemini-api-key>
+OPENAI_API_KEY=<your-openai-api-key>
