@@ -42,7 +42,7 @@ def _build_sandbox() -> dict:
         "len": len, "str": str, "int": int, "float": float,
         "bool": bool, "list": list, "dict": dict, "tuple": tuple,
         "range": range, "enumerate": enumerate, "sorted": sorted,
-        "isinstance": isinstance, "hasattr": hasattr, "getattr": getattr,
+        "isinstance": isinstance,
         "max": max, "min": min, "sum": sum, "abs": abs,
         "zip": zip, "map": map, "filter": filter,
     }
@@ -79,6 +79,47 @@ def _build_sandbox() -> dict:
     return sandbox
 
 
+# The code run here is written by the model, from text that can come from a web
+# page, so it is checked before it runs. The old sandbox handed the code
+# getattr() and a live Path object, which is enough to walk from
+# Path.__init__.__globals__ to os and subprocess and escape completely.
+_BLOCKED_NAMES = {
+    "getattr", "setattr", "delattr", "hasattr", "open", "eval", "exec",
+    "compile", "__import__", "globals", "locals", "vars", "type", "object",
+    "breakpoint", "input", "memoryview", "bytearray",
+}
+# Path methods that delete, overwrite or rename. The prompt promises "inspection
+# only", so the code is not allowed to call them either.
+_BLOCKED_ATTRS = {
+    "unlink", "rmdir", "rename", "replace", "write_text", "write_bytes", "open",
+    "touch", "chmod", "symlink_to", "hardlink_to", "lchmod", "owner", "group",
+}
+
+
+def _validate_generated_code(code: str) -> str | None:
+    """Return None if the code is allowed, otherwise the reason it is refused."""
+    import ast
+    try:
+        tree = ast.parse(code)
+    except SyntaxError as e:
+        return f"syntax error: {e.msg}"
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.Import, ast.ImportFrom)):
+            return "imports are not allowed"
+        if isinstance(node, ast.Attribute):
+            if node.attr.startswith("_"):
+                return f"private attribute '{node.attr}' is not allowed"
+            if node.attr in _BLOCKED_ATTRS:
+                return f"'{node.attr}' is not allowed (inspection only)"
+        elif isinstance(node, ast.Name):
+            if node.id in _BLOCKED_NAMES or node.id.startswith("__"):
+                return f"'{node.id}' is not allowed"
+        elif isinstance(node, ast.Constant) and isinstance(node.value, str):
+            if "__" in node.value:
+                return "dunder names inside strings are not allowed"
+    return None
+
+
 def _execute_generated_code(code: str, player=None) -> str:
     if not code or code.strip() == "UNSAFE":
         return "This action cannot be performed safely."
@@ -87,6 +128,11 @@ def _execute_generated_code(code: str, player=None) -> str:
     if code.startswith("```"):
         lines = code.split("\n")
         code  = "\n".join(lines[1:-1]).strip()
+
+    refusal = _validate_generated_code(code)
+    if refusal:
+        print(f"[Desktop] Refused generated code: {refusal}")
+        return f"This action cannot be performed safely ({refusal})."
 
     sandbox      = _build_sandbox()
     output_lines = []

@@ -69,9 +69,15 @@ def test_detect_failure_logging():
     assert success
     assert result == "Success"
 
-def test_browser_loop_budget():
+def test_browser_loop_budget(monkeypatch):
     from actions.browser_control import browser_control
     import actions.browser_control as bc
+
+    # go_to opens the REAL native browser. The test must never do that: it used
+    # to open a tab on example.com in the owner's own Chrome on every run.
+    opened = []
+    monkeypatch.setattr(bc, "_open_native", lambda url, browser=None: opened.append(url) or "stub: not opened")
+    monkeypatch.setattr(bc, "_log", lambda *a, **k: None)
 
     # Reset budget
     bc._BROWSER_BUDGET["count"] = 0
@@ -84,6 +90,7 @@ def test_browser_loop_budget():
             break
 
     assert aborted, "Browser budget guard failed to trigger after 10 loops"
+    assert len(opened) == 10, "budget must stop the 11th call before it opens anything"
 
 def test_browser_untrusted_wrapper():
     import actions.browser_control as bc

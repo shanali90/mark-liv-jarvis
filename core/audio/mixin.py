@@ -22,6 +22,38 @@ from core.audio.constants import JarvisState
 from memory.config_manager import get_input_device, get_output_device
 
 class AudioMixin:
+
+    def _wake_available(self) -> bool:
+        """Try to start wake-word detection; fall back to ALWAYS-AWAKE if it can't.
+
+        Wake-word mode puts JARVIS to sleep with the mic gated until the local
+        detector hears "Hey Jarvis". If the detector cannot start (the model file
+        is missing, openwakeword is not installed) nothing can ever wake it, and
+        JARVIS sits at "waiting for wake word" forever while the user talks to
+        it. So when the detector is unusable, wake-word mode is switched off for
+        this run only (the saved preference is untouched, so it comes back by
+        itself once the model is installed) and JARVIS stays awake.
+        """
+        try:
+            ok = bool(self._ensure_wake_detector())
+        except Exception as e:
+            print(f"[Wake] detector start failed: {e}")
+            ok = False
+        if ok:
+            return True
+        if self._wake_enabled:
+            self._wake_enabled = False
+            self.state = JarvisState.AWAKE
+            self._awake = True
+            print("[Wake] Wake word unavailable - staying awake (push-to-talk / always-on).")
+            try:
+                self.ui.write_log(
+                    "SYS: Wake word is not set up (model missing), so I stay awake and "
+                    "listen all the time. Install it in Settings > Wake Word to use 'Hey Jarvis'."
+                )
+            except Exception:
+                pass
+        return False
     def _ensure_wake_detector(self) -> bool:
         """Load the detector once (model loads on first start). Idempotent."""
         if self._wake_detector is None:

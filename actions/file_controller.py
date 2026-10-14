@@ -94,10 +94,40 @@ _SAFE_ROOTS: list[Path] = [
     Path.home(),
 ]
 
+# Places inside the home folder that the model must never read or change.
+# Everything under the home folder used to count as "safe", so a request
+# carried in a web page could read ~/.ssh keys or browser cookies, drop a file
+# in the Startup folder (it would run at every login), or edit JARVIS itself.
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent
+
+
+def _protected_roots() -> list[Path]:
+    h = Path.home()
+    return [
+        _PROJECT_ROOT,
+        h / ".ssh", h / ".gnupg", h / ".aws", h / ".azure", h / ".kube",
+        h / ".docker", h / ".config" / "gcloud",
+        h / "AppData" / "Roaming" / "Microsoft" / "Windows" / "Start Menu" / "Programs" / "Startup",
+        h / "AppData" / "Roaming" / "Microsoft" / "Credentials",
+        h / "AppData" / "Roaming" / "Microsoft" / "Protect",
+        h / "AppData" / "Local" / "Microsoft" / "Credentials",
+        h / "AppData" / "Local" / "Google" / "Chrome" / "User Data",
+        h / "AppData" / "Local" / "Microsoft" / "Edge" / "User Data",
+        h / "AppData" / "Local" / "BraveSoftware",
+        h / "AppData" / "Roaming" / "Mozilla",
+        h / "Library" / "Keychains",
+    ]
+
+
 def _is_safe_path(target: Path) -> bool:
-    """Is the given path inside _SAFE_ROOTS? If not, reject the operation."""
+    """Is the given path inside _SAFE_ROOTS and outside every protected place?
+    If not, reject the operation."""
     try:
         resolved = target.resolve()
+        for blocked in _protected_roots():
+            b = blocked.resolve()
+            if resolved == b or resolved.is_relative_to(b):
+                return False
         return any(
             resolved == root.resolve() or resolved.is_relative_to(root.resolve())
             for root in _SAFE_ROOTS

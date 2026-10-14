@@ -276,16 +276,21 @@ def _install_dependencies(dependencies: list[str], project_dir: Path) -> str:
         return f"Install error (non-fatal): {e}"
 
 def _open_vscode(project_dir: Path) -> bool:
+    import shutil
     vscode_candidates = [
-        "code",
+        shutil.which("code") or "code",
         rf"C:\Users\{Path.home().name}\AppData\Local\Programs\Microsoft VS Code\bin\code.cmd",
         r"C:\Program Files\Microsoft VS Code\bin\code.cmd",
     ]
     for cmd in vscode_candidates:
+        # No shell: project_dir is built from a name the model chose, and with
+        # shell=True a folder name containing "&" would run as a second command.
+        # A full path to code.cmd launches fine without one.
+        if cmd != "code" and not Path(cmd).exists():
+            continue
         try:
             subprocess.Popen(
                 [cmd, str(project_dir)],
-                shell=True,
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL
             )

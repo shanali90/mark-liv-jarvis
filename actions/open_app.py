@@ -1,3 +1,5 @@
+import os
+import re
 import time
 import subprocess
 import platform
@@ -70,19 +72,38 @@ def _normalize(raw: str) -> str:
     if key in _APP_ALIASES:
         return _APP_ALIASES[key].get(_SYSTEM, raw)
 
+    # Fuzzy match, but only on whole words: a bare substring test made
+    # "knowledge" match "edge" and "a" match everything.
     for alias_key, os_map in _APP_ALIASES.items():
-        if alias_key in key or key in alias_key:
+        if re.search(rf"\b{re.escape(alias_key)}\b", key) or (
+            len(key) >= 3 and re.search(rf"\b{re.escape(key)}\b", alias_key)
+        ):
             return os_map.get(_SYSTEM, raw)
 
     return raw  
 
-def _launch_windows(app_name: str) -> bool:
+# URI schemes the assistant may open by name ("ms-settings:", "spotify:" ...).
+# Anything else is refused: schemes such as ms-msdt: or file: can run code.
+_SAFE_URI_SCHEMES = {
+    "ms-settings", "ms-windows-store", "ms-clock", "ms-calculator", "msteams",
+    "microsoft-edge", "spotify", "steam", "discord", "whatsapp", "tg",
+    "slack", "zoom", "skype", "mailto",
+}
+_URI_RE = re.compile(r"^([A-Za-z][A-Za-z0-9+.\-]*):[\w/.\-?=&%#@]*$")
 
-    if shutil.which(app_name) or shutil.which(app_name.split(".")[0]):
+
+def _launch_windows(app_name: str) -> bool:
+    """Open an app on Windows WITHOUT passing the name through a shell.
+
+    The name comes from the model, so it can carry text from a web page. With
+    shell=True a name such as "calc.exe & del x" passed the PATH check (it only
+    looked at the part before the first dot) and then ran as two commands.
+    """
+    exe = shutil.which(app_name)
+    if exe:
         try:
             subprocess.Popen(
-                app_name,
-                shell=True,
+                [exe],
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
             )
@@ -91,13 +112,14 @@ def _launch_windows(app_name: str) -> bool:
         except Exception as e:
             print(f"[open_app] subprocess failed: {e}")
 
-    if ":" in app_name:
+    m = _URI_RE.match(app_name)
+    if m and m.group(1).lower() in _SAFE_URI_SCHEMES and hasattr(os, "startfile"):
         try:
-            subprocess.Popen(f"start {app_name}", shell=True)
+            os.startfile(app_name)
             time.sleep(1.0)
             return True
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"[open_app] could not open {m.group(1)}: {e}")
 
     try:
         import pyautogui
