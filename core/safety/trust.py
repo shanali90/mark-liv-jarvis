@@ -26,6 +26,15 @@ DEFAULT_POLICY = {
     "browser_control": LEVEL_ASK,
     "file_controller": LEVEL_ASK,
     "file_processor": LEVEL_SILENT,
+    # Everyday read-only or low-impact tools. Tools missing from this table fall
+    # back to ASK, which made "weather in Karachi" and "open Chrome" wait for a
+    # spoken yes every time.
+    "weather_report": LEVEL_SILENT,
+    "flight_finder": LEVEL_SILENT,
+    "open_app": LEVEL_DO_TELL,
+    "switch_to_window": LEVEL_DO_TELL,
+    "youtube_video": LEVEL_DO_TELL,
+    "reminder": LEVEL_DO_TELL,
     "mail_read": LEVEL_SILENT,
     "mail_search": LEVEL_SILENT,
     "mail_triage_run": LEVEL_SILENT,

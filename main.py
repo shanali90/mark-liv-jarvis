@@ -606,10 +606,9 @@ class JarvisLive(AudioMixin, ToolMixin):
         self._wake_sleep_timeout = WAKE_SLEEP_TIMEOUT
 
         if self._wake_enabled:
-            try:
-                self._ensure_wake_detector()
-            except Exception as e:
-                print(f"[JARVIS] Wake detector startup init error: {e}")
+            # Falls back to always-awake if the detector cannot start, instead
+            # of sleeping forever waiting for a wake word nothing can hear.
+            self._wake_available()
 
         # Restore the saved push-to-talk preference. Doing it here rather than
         # in __init__ means the hotkey thread only exists once there is a
@@ -1649,8 +1648,7 @@ class JarvisLive(AudioMixin, ToolMixin):
 
                     # Wake word: if enabled, come up ASLEEP (mic gated, silent)
                     # until the user says "Hey Jarvis" or taps wake in the UI.
-                    if self._wake_enabled:
-                        self._ensure_wake_detector()
+                    if self._wake_enabled and self._wake_available():
                         self._awake = False
                         self.ui.set_state("SLEEPING")
                         self.ui.write_log("SYS: JARVIS online — sleeping. Say 'Hey Jarvis' to wake me.")
@@ -1703,6 +1701,26 @@ class JarvisLive(AudioMixin, ToolMixin):
                     self._conn_backoff = 0
                     continue
 
+                # The API key itself was rejected. Checked FIRST: the server words
+                # this as INVALID_ARGUMENT, which the branches below would take
+                # for "live tuning rejected" and retry instantly, and an expired
+                # or revoked key never matched the old wording at all, so it
+                # retried every few seconds forever with no message.
+                from core.conn_errors import is_auth_error
+                if is_auth_error(str(e)):
+                    print("[JARVIS] Gemini rejected the API key.")
+                    self.ui.write_log(
+                        "ERR: Gemini rejected the API key (invalid, expired or deleted). "
+                        "Enter a new one, or run scripts\\set_key.py and restart."
+                    )
+                    self.ui.set_state("SLEEPING")
+                    self.ui.prompt_reconfig()
+                    while not self.ui._win._ready:
+                        await asyncio.sleep(1)
+                    print("[JARVIS] New API key saved — reconnecting...")
+                    self._conn_backoff = 3
+                    continue
+
                 # A resumption handle the server will not accept — expired, or
                 # belonging to a session it has since dropped. Without this, the
                 # same dead handle would be replayed on every retry and the
@@ -1753,17 +1771,6 @@ class JarvisLive(AudioMixin, ToolMixin):
                     self.ui.write_log(
                         "SYS: Proactive audio unavailable — reconnecting without it."
                     )
-                    continue
-
-                # Invalid API key — stop hammering the API, prompt re-configuration
-                if "API key not valid" in err_str or "1007" in err_str:
-                    self.ui.write_log("ERR: API key invalid — please re-enter your key.")
-                    self.ui.set_state("SLEEPING")
-                    self.ui.prompt_reconfig()
-                    while not self.ui._win._ready:
-                        await asyncio.sleep(1)
-                    print("[JARVIS] New API key saved — reconnecting...")
-                    _conn_backoff = 3
                     continue
 
                 # Network / timeout errors — log clearly and back off
