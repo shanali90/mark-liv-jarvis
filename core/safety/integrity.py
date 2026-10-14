@@ -7,9 +7,9 @@ class SafetyIntegrityError(RuntimeError):
 
 
 SAFETY_FILE_HASHES = {
-    "main.py": "3aa7b326bf6e1c2e86b86d2616b68d76f40130d5e3457592d29c7a3da8f099b0",
+    "main.py": "864b3ce8fc33a3f0ca05ae06baffa47524f84980eae00b99679bc2e3f8951750",
     "core/confirm.py": "278bb754b6e073d598829492ece81743eafbcb4a5f41721aa703b0c6fe746f1d",
-    "core/safety/trust.py": "61ec62aa10ae4eae1072e504990b15e4aa3470759f4652b9e6f99fb529ef0873",
+    "core/safety/trust.py": "4ce17935bbc18224e06f038db82669986a153aa96d63fd47d4756be8e6addfb3",
     "core/tools/mixin.py": "d0c9475545bed57f380fd6f78d9c2b9922e3207d8ee279a1a5705b6e0b9c9594",
     "scripts/hooks/pre-commit": "40953d61ed5c57d3a49eae0dc8b9258a1995e87f5a2e0bb3bd82764e06eb01db",
 }
