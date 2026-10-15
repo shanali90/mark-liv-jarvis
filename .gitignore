@@ -109,3 +109,7 @@ __pycache__/
 .venv/
 *.db
 logs/
+# OAuth token files under any name (e.g. config/gmail_token.json) and old pickled tokens
+**/*token*.json
+*.pickle
+*.pkl

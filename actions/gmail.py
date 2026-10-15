@@ -1,22 +1,25 @@
 import os
-import pickle
 import base64
 from email.message import EmailMessage
 from googleapiclient.discovery import build
 from google_auth_oauthlib.flow import InstalledAppFlow
 from google.auth.transport.requests import Request
+from google.oauth2.credentials import Credentials
 import google.auth.exceptions
 
 SCOPES = ['https://www.googleapis.com/auth/gmail.modify']
 CREDENTIALS_FILE = 'config/gmail_credentials.json'
-TOKEN_FILE = 'config/gmail_token.pickle'
+TOKEN_FILE = 'config/gmail_token.json'
 
 def _get_gmail_service():
     creds = None
     if os.path.exists(TOKEN_FILE):
-        with open(TOKEN_FILE, 'rb') as token:
-            creds = pickle.load(token)
-            
+        # JSON, not pickle: unpickling a tampered token file runs arbitrary code.
+        try:
+            creds = Credentials.from_authorized_user_file(TOKEN_FILE, SCOPES)
+        except (ValueError, OSError, KeyError):
+            creds = None  # old pickle file or corrupt token: sign in again
+
     if not creds or not creds.valid:
         if creds and creds.expired and creds.refresh_token:
             try:
@@ -31,8 +34,8 @@ def _get_gmail_service():
             flow = InstalledAppFlow.from_client_secrets_file(CREDENTIALS_FILE, SCOPES)
             creds = flow.run_local_server(port=0)
             
-        with open(TOKEN_FILE, 'wb') as token:
-            pickle.dump(creds, token)
+        with open(TOKEN_FILE, 'w', encoding='utf-8') as token:
+            token.write(creds.to_json())
             
     return build('gmail', 'v1', credentials=creds)
 

@@ -13,12 +13,17 @@ Scope: bugs only, no new features. Every fix has a regression test in
 | 6 | `actions/file_controller.py` | **Whole home folder was "safe".** A request carried in a web page could read `~/.ssh` or browser profiles, drop a file in the Startup folder, or edit JARVIS's own files. | Protected locations (secrets, browser profiles, Startup folder, the project folder) are refused for every file operation. | no |
 | 7 | `actions/dev_agent.py` | `shell=True` when opening VS Code with a model-chosen folder name. | Resolved path, no shell. | no |
 | 8 | `core/safety/trust.py` | Tools missing from the policy table defaulted to ASK, so "weather in Karachi" and "open Chrome" needed a spoken yes every time. | Added `weather_report`, `flight_finder` (silent) and `open_app`, `switch_to_window`, `youtube_video`, `reminder` (do-and-tell). Risky tools still ask. | trust.py |
+| 9 | `core/offline_engine.py` | **Offline "close <app>" built a shell string and always said "Closed".** `os.system(f"taskkill /f /im {name}")` took the spoken name unquoted (a name with spaces split into extra taskkill arguments), could close Explorer or JARVIS itself ("close python"), and replied "Closed X" even when nothing was running. | `_close_app()`: name reduced to one safe executable name, run as a list with no shell, system/JARVIS processes protected, reply reflects taskkill's real result. | no |
+| 10 | `actions/gmail.py`, `.gitignore` | **Gmail login stored as a pickle file, and not git-ignored.** Loading a tampered `gmail_token.pickle` runs arbitrary code, and no ignore rule matched `gmail_token.*`, so `git add .` would commit a live Gmail token. | Token stored as JSON (`Credentials.from_authorized_user_file`); an old pickle token is ignored and you sign in again. `.gitignore` now covers `**/*token*.json`, `*.pickle`, `*.pkl`. | no |
 
 ## Checked, no bug found
 - `_save_config_key`: the only caller is `screen_processor` (`camera_index`), so the credential-name restriction blocks nothing legitimate.
 - Tool execution: every unknown tool, shutdown, send, payment and file change reaches the confirmation gate; an exception inside a tool is caught and reported, it does not stop the session.
 - Secrets: the key comes only from `GEMINI_API_KEY` or Windows Credential Manager; `config/api_keys.json` is no longer read.
 - `actions/computer_control.py` starts with a UTF-8 BOM. Python reads that correctly; left alone.
+
+- `ui.py` "duplicate def" hits are `@property` / `.setter` pairs, not duplicates.
+- `core/tts.py` ElevenLabs call already has `timeout=30`.
 
 ## Not changed on purpose
 - `computer_settings.py` and `dashboard/server.py` use `shell=True` only with fixed, non-user text.

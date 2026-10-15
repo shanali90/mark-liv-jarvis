@@ -7,7 +7,6 @@ Provides offline vocal feedback via Windows native SAPI SpVoice.
 from __future__ import annotations
 
 import ctypes
-import os
 import platform
 import re
 import socket
@@ -140,6 +139,45 @@ def _press_key(vk_code: int, times: int = 1):
             time.sleep(0.05)
 
 
+# Processes that must never be closed by a spoken "close ..." command: closing
+# them logs the user out, blanks the desktop, or kills JARVIS itself.
+_PROTECTED_PROCESSES = frozenset({
+    "explorer", "winlogon", "csrss", "wininit", "services", "lsass", "svchost",
+    "system", "smss", "dwm", "taskmgr", "python", "pythonw", "py", "cmd",
+    "powershell", "pwsh", "conhost", "windowsterminal", "code",
+})
+
+
+def _close_app(target: str) -> tuple[bool, str]:
+    """Close an app by name. Returns (closed, spoken reply).
+
+    The name comes from speech, so it is never put in a shell string: it is
+    reduced to one safe executable name and passed to taskkill as an argument.
+    The reply reports what taskkill actually did instead of always saying
+    "Closed".
+    """
+    import subprocess
+
+    name = re.sub(r"\s+", "", str(target or "")).strip("-")
+    if name.lower().endswith(".exe"):
+        name = name[:-4]
+    if not name or not re.fullmatch(r"[A-Za-z0-9_]+", name):
+        return False, f"I can't tell which app to close from '{target}'."
+    if name.lower() in _PROTECTED_PROCESSES:
+        return False, f"I won't close {name}: it is a system or JARVIS process."
+    try:
+        r = subprocess.run(
+            ["taskkill", "/f", "/im", f"{name}.exe"],
+            capture_output=True, text=True, timeout=10,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+    except (OSError, subprocess.SubprocessError) as e:
+        return False, f"Could not close {name}: {e}"
+    if r.returncode == 0:
+        return True, f"Closed {name}."
+    return False, f"{name} is not running, or I could not close it."
+
+
 def handle_offline_command(text: str, ui=None) -> tuple[bool, str]:
     """
     Parses and executes a command from the strict closed offline command set.
@@ -261,10 +299,8 @@ def handle_offline_command(text: str, ui=None) -> tuple[bool, str]:
             return True, reply
 
         try:
-            exe_target = target if target.endswith(".exe") else f"{target}.exe"
-            os.system(f"taskkill /f /im {exe_target} >nul 2>&1")
-            reply = f"Closed {target}."
-            _log_offline_action(text, "CLOSE_APP", reply)
+            ok, reply = _close_app(target)
+            _log_offline_action(text, "CLOSE_APP" if ok else "CLOSE_APP_FAILED", reply)
             return True, reply
         except Exception as e:
             reply = f"Could not close {target}: {e}"

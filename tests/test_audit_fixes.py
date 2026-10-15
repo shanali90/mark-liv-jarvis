@@ -233,3 +233,55 @@ def test_no_test_opens_a_real_browser():
                     if kw.arg == "headless" and isinstance(kw.value, ast.Constant) and kw.value.value is False:
                         offenders.append(f"{path.name}:{node.lineno} visible browser")
     assert not offenders, offenders
+
+
+# ── Offline "close <app>": no shell string, honest reply, protected processes ─
+def test_offline_close_app_never_uses_a_shell_and_reports_truthfully(monkeypatch):
+    import subprocess
+    import core.offline_engine as oe
+
+    calls = []
+
+    def fake_run(args, **kwargs):
+        calls.append((args, kwargs))
+        return types.SimpleNamespace(returncode=128)   # taskkill: not running
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    ok, reply = oe._close_app("chrome")
+    assert ok is False and "Closed" not in reply, "a failed taskkill must not be reported as success"
+    args, kwargs = calls[-1]
+    assert args == ["taskkill", "/f", "/im", "chrome.exe"]
+    assert not kwargs.get("shell")
+
+    # Shell characters and flags never reach taskkill.
+    before = len(calls)
+    for bad in ("chrome & del x", "chrome /im lsass", "../x", "", "   "):
+        ok, _ = oe._close_app(bad)
+        assert ok is False
+    assert len(calls) == before, "unsafe names must be refused before running anything"
+
+    # System processes and JARVIS itself are protected.
+    for protected in ("explorer", "python", "python.exe", "winlogon"):
+        ok, reply = oe._close_app(protected)
+        assert ok is False and "won't close" in reply
+    assert len(calls) == before
+
+    monkeypatch.setattr(subprocess, "run", lambda *a, **k: types.SimpleNamespace(returncode=0))
+    assert oe._close_app("notepad.exe") == (True, "Closed notepad.")
+
+
+# ── Gmail token: JSON, never pickle; and never committed ────────────────────
+def test_gmail_token_is_not_pickled():
+    src = (ROOT / "actions" / "gmail.py").read_text(encoding="utf-8")
+    tree = ast.parse(src)
+    imported = {a.name for n in ast.walk(tree) if isinstance(n, ast.Import) for a in n.names}
+    assert "pickle" not in imported and "pickle." not in src.replace("# JSON, not pickle", "")
+    assert "gmail_token.json" in src
+
+
+def test_gitignore_covers_oauth_token_files():
+    import subprocess
+    for name in ("config/gmail_token.json", "config/gmail_token.pickle", "config/api_keys.json"):
+        r = subprocess.run(["git", "check-ignore", "-q", name], cwd=ROOT)
+        assert r.returncode == 0, f"{name} must be git-ignored"
