@@ -285,3 +285,39 @@ def test_gitignore_covers_oauth_token_files():
     for name in ("config/gmail_token.json", "config/gmail_token.pickle", "config/api_keys.json"):
         r = subprocess.run(["git", "check-ignore", "-q", name], cwd=ROOT)
         assert r.returncode == 0, f"{name} must be git-ignored"
+
+
+# ── open_app: "open WhatsApp" is the app if installed, else the website ─────
+def _smart_env(monkeypatch, start_app=None):
+    import actions.open_app as oa
+    opened = {"urls": [], "apps": []}
+    monkeypatch.setattr(oa, "_open_url", lambda url: opened["urls"].append(url) or True)
+    monkeypatch.setattr(oa, "_find_start_app", lambda name: start_app)
+    monkeypatch.setattr(oa, "_launch_start_app", lambda appid: opened["apps"].append(appid) or True)
+    return oa, opened
+
+
+def test_open_known_service_uses_website_when_app_not_installed(monkeypatch):
+    oa, opened = _smart_env(monkeypatch, start_app=None)
+    msg = oa._resolve_and_open("WhatsApp")
+    assert opened["urls"] == ["https://web.whatsapp.com"] and opened["apps"] == []
+    assert "not installed" in msg
+
+
+def test_open_known_service_prefers_installed_app(monkeypatch):
+    oa, opened = _smart_env(monkeypatch, start_app="5319275A.WhatsAppDesktop_cv1g1gvanyjgm!App")
+    oa._resolve_and_open("whatsapp")
+    assert opened["apps"] and opened["urls"] == []
+
+
+def test_open_domain_opens_https_and_unsafe_names_are_not_urls(monkeypatch):
+    import actions.open_app as real
+    real_open_url = real._open_url          # before _smart_env replaces it
+    oa, opened = _smart_env(monkeypatch)
+    oa._resolve_and_open("github dot com")
+    assert opened["urls"] == ["https://github.com"]
+    for bad in ("file:///etc/passwd", "javascript:alert(1)", "calc.exe & del x", "notepad.exe"):
+        assert oa._as_url(bad) is None, bad
+    assert real_open_url("file:///c:/windows/system32/calc.exe") is False  # refused before any launch
+    # an ordinary app name is not handled by the resolver
+    assert oa._resolve_and_open("Calculator") is None

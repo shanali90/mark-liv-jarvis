@@ -1,6 +1,8 @@
+import json
 import os
 import re
 import time
+import webbrowser
 import subprocess
 import platform
 import shutil
@@ -90,6 +92,136 @@ _SAFE_URI_SCHEMES = {
     "slack", "zoom", "skype", "mailto",
 }
 _URI_RE = re.compile(r"^([A-Za-z][A-Za-z0-9+.\-]*):[\w/.\-?=&%#@]*$")
+
+
+# ── Smart target resolution: installed app first, then the website ───────────
+# "Open WhatsApp" can mean the desktop app or web.whatsapp.com. The rule is:
+# a URL/domain opens in the browser; a known service opens its installed app if
+# the OS lists one, otherwise its website; anything else goes to the normal
+# app launcher. Only http(s) is ever opened here.
+_WEB_SERVICES: dict[str, str] = {
+    "whatsapp": "https://web.whatsapp.com",
+    "instagram": "https://www.instagram.com",
+    "facebook": "https://www.facebook.com",
+    "messenger": "https://www.messenger.com",
+    "youtube": "https://www.youtube.com",
+    "gmail": "https://mail.google.com",
+    "google": "https://www.google.com",
+    "google drive": "https://drive.google.com",
+    "google maps": "https://maps.google.com",
+    "google calendar": "https://calendar.google.com",
+    "twitter": "https://x.com",
+    "x": "https://x.com",
+    "linkedin": "https://www.linkedin.com",
+    "tiktok": "https://www.tiktok.com",
+    "reddit": "https://www.reddit.com",
+    "snapchat": "https://web.snapchat.com",
+    "pinterest": "https://www.pinterest.com",
+    "telegram": "https://web.telegram.org",
+    "discord": "https://discord.com/app",
+    "netflix": "https://www.netflix.com",
+    "spotify": "https://open.spotify.com",
+    "github": "https://github.com",
+    "chatgpt": "https://chatgpt.com",
+    "amazon": "https://www.amazon.com",
+    "wikipedia": "https://www.wikipedia.org",
+    "outlook": "https://outlook.live.com",
+}
+_NOT_A_TLD = {"exe", "bat", "cmd", "msc", "lnk", "ps1", "py", "dll", "sys", "msi", "vbs", "js"}
+_DOMAIN_RE = re.compile(r"^(?:https?://)?((?:[a-z0-9\-]+\.)+([a-z]{2,24}))(?::\d{1,5})?(?:/[^\s]*)?$", re.I)
+_APPID_RE = re.compile(r"^[A-Za-z0-9_.!{}\\\-() ]+$")
+
+
+def _as_url(name: str) -> str | None:
+    """Return an https URL if the spoken/typed name is a web address, else None."""
+    t = re.sub(r"\s+dot\s+", ".", name.strip().lower())
+    if re.search(r"\s", t):
+        return None
+    m = _DOMAIN_RE.match(t)
+    if not m or m.group(2).lower() in _NOT_A_TLD:
+        return None
+    return t if t.startswith(("http://", "https://")) else "https://" + t
+
+
+def _open_url(url: str) -> bool:
+    """Open an http(s) URL in Chrome if present, else the default browser."""
+    if not url.lower().startswith(("http://", "https://")):
+        return False
+    chrome = shutil.which("chrome") or shutil.which("google-chrome")
+    if not chrome and _SYSTEM == "Windows":
+        for base in (os.environ.get("PROGRAMFILES"), os.environ.get("PROGRAMFILES(X86)"),
+                     os.environ.get("LOCALAPPDATA")):
+            cand = os.path.join(base or "", "Google", "Chrome", "Application", "chrome.exe")
+            if base and os.path.exists(cand):
+                chrome = cand
+                break
+    if chrome:
+        try:
+            subprocess.Popen([chrome, url], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            return True
+        except Exception as e:
+            print(f"[open_app] Chrome launch failed: {e}")
+    try:
+        return bool(webbrowser.open(url))
+    except Exception as e:
+        print(f"[open_app] browser open failed: {e}")
+        return False
+
+
+def _find_start_app(name: str) -> str | None:
+    """Windows: AppID of an installed app whose Start-menu name matches, else None."""
+    if _SYSTEM != "Windows":
+        return None
+    try:
+        r = subprocess.run(
+            ["powershell", "-NoProfile", "-Command", "Get-StartApps | ConvertTo-Json -Compress"],
+            capture_output=True, text=True, timeout=12,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+        apps = json.loads(r.stdout or "[]")
+    except Exception:
+        return None
+    if isinstance(apps, dict):
+        apps = [apps]
+    want = name.strip().lower()
+    exact = word = None
+    for a in apps:
+        n, appid = str(a.get("Name", "")).lower(), str(a.get("AppID", ""))
+        if not appid or not _APPID_RE.match(appid):
+            continue
+        if n == want:
+            exact = exact or appid
+        elif re.search(rf"\b{re.escape(want)}\b", n):
+            word = word or appid
+    return exact or word
+
+
+def _launch_start_app(appid: str) -> bool:
+    try:
+        subprocess.Popen(["explorer.exe", f"shell:AppsFolder\\{appid}"],
+                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        time.sleep(1.5)
+        return True
+    except Exception as e:
+        print(f"[open_app] Start app launch failed: {e}")
+        return False
+
+
+def _resolve_and_open(app_name: str) -> str | None:
+    """Open a web address or a known web service. None = not handled here."""
+    url = _as_url(app_name)
+    if url:
+        return f"Opened {url} in the browser." if _open_url(url) else f"Could not open {url}."
+    key = app_name.strip().lower()
+    site = _WEB_SERVICES.get(key)
+    if not site:
+        return None
+    appid = _find_start_app(app_name)
+    if appid and _launch_start_app(appid):
+        return f"Opened the {app_name} app."
+    if _open_url(site):
+        return f"{app_name} app is not installed, so I opened {site} in the browser."
+    return f"Could not open {app_name}: no app found and the browser would not open."
 
 
 def _launch_windows(app_name: str) -> bool:
@@ -290,6 +422,16 @@ def open_app(
     except Exception as e:
         print(f"[open_app] Existing window check error: {e}")
 
+    try:
+        smart = _resolve_and_open(app_name)
+    except Exception as e:
+        print(f"[open_app] resolver error: {e}")
+        smart = None
+    if smart is not None:
+        if player:
+            player.write_log(f"[open_app] {smart}")
+        return smart
+
     print(f"[open_app] no existing instance for '{app_name}', opening new ({_SYSTEM})")
     if player:
         player.write_log(f"[open_app] {app_name}")
@@ -312,13 +454,13 @@ def open_app(
 # ── Tool declaration (auto-discovered by core/action_loader.py) ──────────────
 TOOL = {
     "name": "open_app",
-    "description": "Opens an installed desktop application on the computer (e.g. 'Calculator', 'Notepad', 'Spotify', 'VSCode'). DO NOT use this tool for web searches, opening websites, or URLs — for any web search or website, use browser_control.",
+    "description": "Opens an application OR a website by name. Use it for 'open WhatsApp', 'open Instagram', 'open Facebook', 'open YouTube', 'open github.com', 'open Calculator', 'open Spotify'. For known services it opens the installed app if there is one, otherwise the website in Chrome; a domain such as 'example.com' opens in the browser. For web searches, reading a page, clicking or typing inside a site, use browser_control.",
     "parameters": {
         "type": "OBJECT",
         "properties": {
             "app_name": {
                 "type": "STRING",
-                "description": "Exact name of the desktop application (e.g. 'Spotify', 'Calculator', 'Notepad')"
+                "description": "Name of the app or website (e.g. 'WhatsApp', 'Instagram', 'Calculator', 'github.com')"
             }
         },
         "required": [
