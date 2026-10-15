@@ -113,3 +113,4 @@ logs/
 **/*token*.json
 *.pickle
 *.pkl
+memory/organizer/

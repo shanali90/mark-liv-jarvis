@@ -17,6 +17,14 @@ Scope: bugs only, no new features. Every fix has a regression test in
 | 10 | `actions/gmail.py`, `.gitignore` | **Gmail login stored as a pickle file, and not git-ignored.** Loading a tampered `gmail_token.pickle` runs arbitrary code, and no ignore rule matched `gmail_token.*`, so `git add .` would commit a live Gmail token. | Token stored as JSON (`Credentials.from_authorized_user_file`); an old pickle token is ignored and you sign in again. `.gitignore` now covers `**/*token*.json`, `*.pickle`, `*.pkl`. | no |
 | 11 | `actions/open_app.py` | **"Open WhatsApp / Instagram / a website" did nothing useful.** The tool description told the model never to use it for websites. For a name with no installed app, Windows typed it into the Start menu (landing on a web search) and still reported "Opened". | A web address opens in Chrome (http/https only). A known service (WhatsApp, Instagram, Facebook, YouTube, Gmail, ...) opens its installed app if Windows lists one, otherwise its website, and the reply says which. Tool description updated. | no |
 
+## New tool: `file_organizer` (not a bug fix; added at the owner's request)
+Scan, plan, apply, restore for cleaning a folder. Nothing is deleted: duplicates (proven by full SHA-256) are
+moved to `_JARVIS_Duplicates/<date>/`, loose top-level files go to `Sorted/<Type>/`. Only folders allowed by
+`file_controller` are touched; files changed in the last 10 minutes or since the plan was made are skipped;
+name clashes get a suffix; every applied plan writes a journal (`memory/organizer/`, git-ignored) so `restore`
+works in a later session too. Trust level is the default (ASK), so no pinned file changed.
+Tests: 5 in `tests/test_audit_fixes.py`, each checked by deliberately breaking the code and seeing the test fail.
+
 ## Checked, no bug found
 - `_save_config_key`: the only caller is `screen_processor` (`camera_index`), so the credential-name restriction blocks nothing legitimate.
 - Tool execution: every unknown tool, shutdown, send, payment and file change reaches the confirmation gate; an exception inside a tool is caught and reported, it does not stop the session.

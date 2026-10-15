@@ -321,3 +321,116 @@ def test_open_domain_opens_https_and_unsafe_names_are_not_urls(monkeypatch):
     assert real_open_url("file:///c:/windows/system32/calc.exe") is False  # refused before any launch
     # an ordinary app name is not handled by the resolver
     assert oa._resolve_and_open("Calculator") is None
+
+
+# ── file_organizer: finds duplicates, never deletes, always reversible ──────
+def _organizer_env(monkeypatch):
+    """A temp folder with old files in it; all state kept in the temp folder."""
+    import os
+    import tempfile
+    import time
+    import actions.file_organizer as fo
+
+    tmp = Path(tempfile.mkdtemp(prefix="org_test_"))
+    monkeypatch.setattr(fo, "_STATE_DIR", tmp / "_state")
+    monkeypatch.setattr(fo, "_allowed", lambda p: str(p).startswith(str(tmp)) and "_blocked" not in str(p))
+    root = tmp / "dl"
+    root.mkdir()
+    old = time.time() - 86400
+
+    def make(rel, data):
+        f = root / rel
+        f.parent.mkdir(parents=True, exist_ok=True)
+        f.write_bytes(data)
+        os.utime(f, (old, old))
+        return f
+    return fo, root, make
+
+
+def _all_files(root):
+    return sorted(str(p.relative_to(root)) for p in root.rglob("*") if p.is_file())
+
+
+def test_duplicates_are_found_by_content_not_name(monkeypatch):
+    fo, root, make = _organizer_env(monkeypatch)
+    a = make("report.pdf", b"same bytes " * 100)
+    b = make("copy of report (1).pdf", b"same bytes " * 100)
+    make("other.pdf", b"different " * 110)          # same size class, different content
+    make("empty1.txt", b"")
+    make("empty2.txt", b"")
+    # Same size and identical first 64 KB, different last byte: NOT duplicates.
+    big = b"x" * 70000
+    make("video1.mp4", big + b"A")
+    make("video2.mp4", big + b"B")
+    twin = make("video3.mp4", big + b"A")
+    groups = fo.find_duplicates(list(fo._walk(root)))
+    names = sorted(sorted(p.name for p in g) for g in groups)
+    assert names == sorted([sorted([a.name, b.name]), sorted(["video1.mp4", twin.name])]), names
+
+
+def test_plan_apply_never_deletes_and_restore_puts_everything_back(monkeypatch):
+    fo, root, make = _organizer_env(monkeypatch)
+    make("a.jpg", b"img" * 50)
+    make("a copy.jpg", b"img" * 50)
+    make("notes.txt", b"hello")
+    make("setup.exe", b"exe" * 9)
+    sub = make("projects/keep/readme.md", b"nested file stays put")
+    before = _all_files(root)
+
+    plan = fo.build_plan(root)
+    assert plan["moves"], "expected duplicate and sort moves"
+    assert all(Path(m["src"]).exists() for m in plan["moves"]), "planning must not move anything"
+    assert _all_files(root) == before
+    assert any(m["reason"].startswith("duplicate") for m in plan["moves"])
+    assert all(Path(m["src"]) != sub for m in plan["moves"]), "files in sub-folders are left alone"
+
+    journal = fo.apply_plan(plan)
+    after = _all_files(root)
+    assert len(after) == len(before), "no file may be deleted"
+    assert sub.exists()
+    assert any(f.startswith("_JARVIS_Duplicates") for f in after)
+    assert any(f.startswith("Sorted") for f in after)
+
+    msg = fo.restore(plan["id"])
+    assert "Restored" in msg and len(journal["done"]) > 0
+    assert [f for f in _all_files(root) if not f.startswith(("Sorted", "_JARVIS"))] == before
+
+
+def test_apply_skips_files_changed_after_planning_and_never_overwrites(monkeypatch):
+    fo, root, make = _organizer_env(monkeypatch)
+    f = make("notes.txt", b"hello")
+    plan = fo.build_plan(root)
+    f.write_bytes(b"edited after the plan was made")           # size changed
+    journal = fo.apply_plan(plan)
+    assert f.exists() and journal["done"] == []
+    assert journal["skipped"] and "changed" in journal["skipped"][0]["why"]
+
+    # A name already taken at the destination gets a suffix, never an overwrite.
+    fo2, root2, make2 = _organizer_env(monkeypatch)
+    make2("notes.txt", b"one")
+    taken = make2("Sorted/Documents/notes.txt", b"already here")
+    plan2 = fo2.build_plan(root2)
+    fo2.apply_plan(plan2)
+    assert taken.read_bytes() == b"already here"
+    assert (root2 / "Sorted" / "Documents" / "notes (1).txt").read_bytes() == b"one"
+
+
+def test_organizer_skips_recent_and_protected_files(monkeypatch):
+    import os
+    import time
+    fo, root, make = _organizer_env(monkeypatch)
+    fresh = make("download.part.txt", b"still downloading")
+    os.utime(fresh, (time.time(), time.time()))               # modified just now
+    make("_blocked/secret.txt", b"x")
+    make("ok.txt", b"y")
+    plan = fo.build_plan(root)
+    srcs = {Path(m["src"]).name for m in plan["moves"]}
+    assert "download.part.txt" not in srcs, "recently changed files may be in use"
+    assert "secret.txt" not in srcs
+    assert "ok.txt" in srcs
+
+
+def test_organizer_plan_ids_cannot_reach_other_paths(monkeypatch):
+    fo, root, make = _organizer_env(monkeypatch)
+    for bad in ("../../etc/passwd", "..\\x", "a/b", "", "x y"):
+        assert fo._load("plan", bad) is None
