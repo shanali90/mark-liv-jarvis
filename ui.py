@@ -5220,6 +5220,21 @@ class MainWindow(QMainWindow):
         return bool(get_secret("gemini_api_key"))
 
     def _show_setup(self):
+        # With wake word on, the window starts hidden ("stealth boot"). A rejected
+        # key used to open this overlay inside the hidden window: nothing appeared
+        # and the app waited for a key nobody could type. Show the window first,
+        # and drop any overlay left over from an earlier error.
+        if not self.isVisible():
+            self.show()
+        self.raise_()
+        self.activateWindow()
+        if self._overlay is not None:
+            try:
+                self._overlay.hide()
+                self._overlay.deleteLater()
+            except Exception:
+                pass
+            self._overlay = None
         ov = SetupOverlay(self.centralWidget())
         cw = self.centralWidget()
         ow, oh = 460, 390
@@ -5245,10 +5260,16 @@ class MainWindow(QMainWindow):
             return
 
         os.makedirs(CONFIG_DIR, exist_ok=True)
-        SETTINGS_FILE.write_text(
-            json.dumps({"os_system": os_name}, indent=4),
-            encoding="utf-8",
-        )
+        # Merge into the existing settings. Writing only {"os_system": ...} threw
+        # away every other saved preference each time a key was entered.
+        try:
+            settings = json.loads(SETTINGS_FILE.read_text(encoding="utf-8"))
+            if not isinstance(settings, dict):
+                settings = {}
+        except (OSError, ValueError):
+            settings = {}
+        settings["os_system"] = os_name
+        SETTINGS_FILE.write_text(json.dumps(settings, indent=4), encoding="utf-8")
         self._ready = True
         if self._overlay:
             self._overlay.hide()

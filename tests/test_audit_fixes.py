@@ -434,3 +434,32 @@ def test_organizer_plan_ids_cannot_reach_other_paths(monkeypatch):
     fo, root, make = _organizer_env(monkeypatch)
     for bad in ("../../etc/passwd", "..\\x", "a/b", "", "x y"):
         assert fo._load("plan", bad) is None
+
+
+# ── ui.py: a rejected key must show the key box, and must not wipe settings ──
+def _ui_method(name):
+    tree = ast.parse((ROOT / "ui.py").read_text(encoding="utf-8"))
+    for node in ast.walk(tree):
+        if isinstance(node, ast.FunctionDef) and node.name == name:
+            return node
+    raise AssertionError(f"{name} not found in ui.py")
+
+
+def test_key_prompt_shows_the_window_even_in_stealth_boot():
+    fn = _ui_method("_show_setup")
+    calls = [n.func.attr for n in ast.walk(fn)
+             if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)]
+    assert "show" in calls and "raise_" in calls and "activateWindow" in calls
+    first_overlay = min(n.lineno for n in ast.walk(fn)
+                        if isinstance(n, ast.Name) and n.id == "SetupOverlay")
+    first_show = min(n.lineno for n in ast.walk(fn)
+                     if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)
+                     and n.func.attr == "show")
+    assert first_show < first_overlay, "the window must be shown before the overlay is built"
+
+
+def test_saving_a_key_keeps_the_other_settings():
+    src = ast.unparse(_ui_method("_on_setup_done"))
+    assert "json.dumps({'os_system': os_name}" not in src.replace('"', "'"), \
+        "settings.json must be merged, not replaced"
+    assert "settings['os_system'] = os_name" in src.replace('"', "'")
