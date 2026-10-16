@@ -81,7 +81,15 @@ try:
 except Exception:
     pass
 
-def test_conn_status():
+def test_conn_status(tmp_path, monkeypatch):
+    project_activity_log = main.BASE_DIR / "logs" / "jarvis_activity.log"
+    original_log_stat = (
+        (project_activity_log.stat().st_size, project_activity_log.stat().st_mtime_ns)
+        if project_activity_log.exists()
+        else None
+    )
+    monkeypatch.chdir(tmp_path)
+
     async def _impl():
         ui = DummyUI()
         jarvis = main.JarvisLive(ui)
@@ -148,6 +156,19 @@ def test_conn_status():
             pass
 
     asyncio.run(_impl())
+    isolated_log = tmp_path / "logs" / "jarvis_activity.log"
+    assert isolated_log.exists()
+    isolated_contents = isolated_log.read_text(encoding="utf-8")
+    assert "State: CONNECTED" in isolated_contents
+    assert "State: RECONNECTING" in isolated_contents
+    if original_log_stat is None:
+        assert not project_activity_log.exists()
+    else:
+        current_log_stat = (
+            project_activity_log.stat().st_size,
+            project_activity_log.stat().st_mtime_ns,
+        )
+        assert current_log_stat == original_log_stat
 
 if __name__ == "__main__":
     test_conn_status()
