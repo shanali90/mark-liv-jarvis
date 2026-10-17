@@ -103,6 +103,11 @@ def check_all() -> list[str]:
     Run all pending topic checks (once per day per topic).
     Returns a list of [MONITOR_ALERT] strings — empty if nothing new.
     """
+    from core.activity import background_notice_allowed
+
+    if not background_notice_allowed():
+        return []
+
     from actions.web_search import _ddg_news
 
     monitors = _load()
@@ -155,4 +160,4 @@ def check_all() -> list[str]:
     if changed:
         _save(monitors)
 
-    return alerts
+    return alerts if background_notice_allowed() else []

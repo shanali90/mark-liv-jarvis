@@ -5,10 +5,12 @@
 # never be.
 
 # ── Secrets. Committing any of these publishes them. ──────────────────────────
-config/api_keys.json          # your Gemini API key, plus per-plugin credentials
+# Your Gemini API key, plus per-plugin credentials.
+config/api_keys.json
 api_keys.json
 **/api_keys.json
-config/settings.json          # local preferences may include identity/device names
+# Local preferences may include identity/device names.
+config/settings.json
 config/certs/                 # the dashboard's TLS private key and certificate
 **/client_secret*.json
 client_secret*.json

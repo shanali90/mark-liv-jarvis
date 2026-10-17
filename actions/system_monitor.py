@@ -152,12 +152,20 @@ class SystemMonitor:
         self._last_alert[key] = time.monotonic()
 
     def check(self) -> str | None:
+        from core.activity import background_notice_allowed
+
+        if not background_notice_allowed():
+            return None
+
         try:
             cpu  = psutil.cpu_percent(interval=None)
             ram  = psutil.virtual_memory().percent
             temp = _get_cpu_temp()
             gpu  = _get_gpu_usage()
         except Exception:
+            return None
+
+        if not background_notice_allowed():
             return None
 
         alerts: list[str] = []

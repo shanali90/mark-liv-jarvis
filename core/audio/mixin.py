@@ -293,6 +293,9 @@ class AudioMixin:
                             if txt:
                                 in_buf.append(txt)
                                 self._last_user_speech = time.monotonic()
+                                from core.activity import record_user_speech
+
+                                record_user_speech()
 
                         if sc.turn_complete:
                             if self._turn_done_event:
@@ -430,6 +433,9 @@ class AudioMixin:
                     if response.tool_call:
                         fn_responses = []
                         for fc in response.tool_call.function_calls:
+                            from core.activity import record_tool_call
+
+                            record_tool_call()
                             print(f"[JARVIS] 📞 {fc.name}")
                             fr = await self._execute_tool(fc)
                             fn_responses.append(fr)

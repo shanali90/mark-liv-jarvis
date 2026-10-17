@@ -240,6 +240,16 @@ def save_proactive_audio_enabled(enabled: bool) -> None:
     _save_flag("proactive_audio", enabled)
 
 
+def get_proactive_enabled() -> bool:
+    """Whether background proactive check-ins are enabled (off by default)."""
+    return bool(load_api_keys().get("proactive_enabled", False))
+
+
+def save_proactive_enabled(enabled: bool) -> None:
+    """Persist whether background proactive check-ins are enabled."""
+    _save_flag("proactive_enabled", enabled)
+
+
 MEDIA_RESOLUTIONS = ("default", "low", "medium", "high")
 
 

@@ -170,6 +170,7 @@ def _open_url(url: str) -> str | bool:
             return f"Opened a new {name} tab"
         except Exception as e:
             print(f"[open_app] Chrome launch failed: {e}")
+            return False
     try:
         if webbrowser.open(url):
             return f"Opened a new {name} tab"

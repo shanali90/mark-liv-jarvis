@@ -5,7 +5,7 @@ from types import SimpleNamespace
 
 import numpy as np
 
-from actions import browser_control, computer_control
+from actions import browser_control, computer_control, open_app
 from core import tab_finder
 
 
@@ -70,7 +70,7 @@ def test_screen_click_not_found_does_not_click(monkeypatch):
         {"action": "screen_click", "description": "Save"}
     )
 
-    assert result == "I could not find 'Save' on screen"
+    assert result == "I could not find 'Save' on screen."
     assert mouse.clicks == []
 
 
@@ -169,7 +169,7 @@ def test_found_screen_click_is_verified(monkeypatch):
         {"action": "screen_click", "description": "Save"}
     )
 
-    assert result == "Clicked 'Save' at (500, 400) - the screen changed, it worked."
+    assert result == "Clicked 'Save' at (500,400) - the screen changed, it worked."
     assert mouse.clicks == [(500, 400, "left", 1)]
 
 
@@ -276,3 +276,50 @@ def test_no_match_launches_chrome_once(monkeypatch):
 
     assert result == "Opened a new YouTube tab"
     assert len(launches) == 1
+
+
+def test_open_app_does_not_retry_browser_after_chrome_launch_failure(monkeypatch):
+    launches = []
+    default_browser_calls = []
+    monkeypatch.setattr(tab_finder.platform, "system", lambda: "Windows")
+    monkeypatch.setattr(tab_finder, "_chrome_windows", lambda: [])
+    monkeypatch.setattr(open_app, "_SYSTEM", "Windows")
+    monkeypatch.setattr(open_app.shutil, "which", lambda _name: "chrome.exe")
+
+    def fail_launch(*_args, **_kwargs):
+        launches.append(True)
+        raise OSError("launch failed")
+
+    monkeypatch.setattr(open_app.subprocess, "Popen", fail_launch)
+    monkeypatch.setattr(
+        open_app.webbrowser,
+        "open",
+        lambda url: default_browser_calls.append(url) or True,
+    )
+
+    assert open_app._open_url("https://youtube.com") is False
+    assert len(launches) == 1
+    assert default_browser_calls == []
+
+
+def test_switch_tab_action_reports_found_or_not_found_without_launch(monkeypatch):
+    window = FakeWindow(["New Tab - Google Chrome", "WhatsApp - Google Chrome"])
+    _fake_tab_cycle(monkeypatch, window)
+    monkeypatch.setattr(browser_control, "_OS", "Windows")
+    launches = []
+    monkeypatch.setattr(browser_control.subprocess, "Popen",
+                        lambda *args, **kwargs: launches.append(args))
+
+    found = browser_control.browser_control(
+        {"action": "switch_tab", "name": "WhatsApp"}
+    )
+    assert found == "Switched to your already-open WhatsApp tab"
+    assert launches == []
+
+    window.titles = ["New Tab - Google Chrome", "Inbox - Gmail - Google Chrome"]
+    window.index = 0
+    missing = browser_control.browser_control(
+        {"action": "switch_tab", "name": "YouTube"}
+    )
+    assert missing == "I could not find an already-open YouTube tab."
+    assert launches == []

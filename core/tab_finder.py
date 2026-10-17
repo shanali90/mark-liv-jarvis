@@ -92,7 +92,7 @@ def _advance_tab() -> None:
     import pyautogui
 
     pyautogui.hotkey("ctrl", "tab")
-    time.sleep(0.1)
+    time.sleep(0.15)
 
 
 def find_and_focus_existing(url_or_service: str) -> bool:

@@ -282,7 +282,12 @@ def test_gmail_token_is_not_pickled():
 
 def test_gitignore_covers_oauth_token_files():
     import subprocess
-    for name in ("config/gmail_token.json", "config/gmail_token.pickle", "config/api_keys.json"):
+    for name in (
+        "config/gmail_token.json",
+        "config/gmail_token.pickle",
+        "config/api_keys.json",
+        "config/settings.json",
+    ):
         r = subprocess.run(["git", "check-ignore", "-q", name], cwd=ROOT)
         assert r.returncode == 0, f"{name} must be git-ignored"
 
@@ -456,6 +461,37 @@ def test_key_prompt_shows_the_window_even_in_stealth_boot():
                      if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)
                      and n.func.attr == "show")
     assert first_show < first_overlay, "the window must be shown before the overlay is built"
+
+
+def test_jarvis_window_remains_visible_while_wake_word_is_enabled():
+    tree = ast.parse((ROOT / "ui.py").read_text(encoding="utf-8"))
+    jarvis_ui = next(
+        node for node in tree.body
+        if isinstance(node, ast.ClassDef) and node.name == "JarvisUI"
+    )
+    init = next(
+        node for node in jarvis_ui.body
+        if isinstance(node, ast.FunctionDef) and node.name == "__init__"
+    )
+    init_calls = [
+        node.func.attr
+        for node in ast.walk(init)
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+    ]
+    assert "showNormal" in init_calls
+    assert "activateWindow" in init_calls
+    assert not any(
+        isinstance(node, ast.Name) and node.id == "get_wake_word_enabled"
+        for node in ast.walk(init)
+    ), "wake gating must not suppress the visible UI"
+
+    transition = next(
+        node for node in jarvis_ui.body
+        if isinstance(node, ast.FunctionDef) and node.name == "on_wake_transition"
+    )
+    transition_text = ast.unparse(transition)
+    assert "SHOW_WINDOW" in transition_text
+    assert '"HIDE"' not in transition_text
 
 
 def test_saving_a_key_keeps_the_other_settings():

@@ -453,6 +453,7 @@ def _open_native(url: str, browser_name: Optional[str] = None) -> str:
             return f"Opened a new {service_name(url)} tab" if url else "Opened a new Chrome tab"
         except Exception as e:
             print(f"[Browser] Chrome launch failed: {e}")
+            return f"Failed to launch Chrome: {e}"
 
     # If user explicitly specified a different browser (e.g. edge, brave)
     if target_browser != "chrome":
@@ -1034,6 +1035,27 @@ def browser_control(
     browser = params.get("browser", "").lower().strip() or None
     result  = "Unknown action."
 
+    if action == "switch_tab":
+        name = (params.get("name") or params.get("url") or "").strip()
+        if not name:
+            result = "Please specify the name or URL of the tab to switch to."
+        elif _OS != "Windows":
+            result = "Switching to an existing Chrome tab by title is supported on Windows only."
+        else:
+            try:
+                from core.tab_finder import find_and_focus_existing, service_name
+
+                label = service_name(name)
+                result = (
+                    f"Switched to your already-open {label} tab"
+                    if find_and_focus_existing(name)
+                    else f"I could not find an already-open {label} tab."
+                )
+            except Exception as e:
+                result = f"Could not check open Chrome tabs: {e}"
+        _log(player, result)
+        return result
+
     if action == "switch":
         target = browser or params.get("target", "").lower().strip()
         result = _registry.switch(target) if target else "Please specify a browser."
@@ -1179,13 +1201,13 @@ def _log(player, text: str):
 # ── Tool declaration (auto-discovered by core/action_loader.py) ──────────────
 TOOL = {
     "name": "browser_control",
-    "description": "Controls any web browser. Use for: opening websites, searching the web, clicking elements, filling forms, scrolling, screenshots, navigation, any web-based task. Simple open/search requests launch the user's own browser normally (their real profile and logged-in accounts); interactive actions (click, type, fill_form...) attach an automation browser. Always pass the 'browser' parameter when the user specifies a browser (e.g. 'open in Edge', 'use Firefox', 'open Chrome'). Multiple browsers can run simultaneously.",
+    "description": "Controls any web browser. Use for: opening websites, searching the web, switching to an already-open named tab, clicking elements, filling forms, scrolling, screenshots, navigation, any web-based task. Use action switch_tab with name='WhatsApp', 'Facebook', 'YouTube', 'Gmail', or a URL when asked to switch tabs. Simple open/search requests launch the user's own browser normally (their real profile and logged-in accounts); interactive actions (click, type, fill_form...) attach an automation browser. Always pass the 'browser' parameter when the user specifies a browser (e.g. 'open in Edge', 'use Firefox', 'open Chrome'). Multiple browsers can run simultaneously.",
     "parameters": {
         "type": "OBJECT",
         "properties": {
             "action": {
                 "type": "STRING",
-                "description": "go_to | search | click | type | scroll | fill_form | smart_click | smart_type | get_text | get_url | press | new_tab | close_tab | screenshot | back | forward | reload | switch | list_browsers | close | close_all"
+                "description": "go_to | search | switch_tab | click | type | scroll | fill_form | smart_click | smart_type | get_text | get_url | press | new_tab | close_tab | screenshot | back | forward | reload | switch | list_browsers | close | close_all"
             },
             "browser": {
                 "type": "STRING",
@@ -1193,7 +1215,11 @@ TOOL = {
             },
             "url": {
                 "type": "STRING",
-                "description": "URL for go_to / new_tab action"
+                "description": "URL for go_to / new_tab or switch_tab action"
+            },
+            "name": {
+                "type": "STRING",
+                "description": "Service or host name for switch_tab, e.g. WhatsApp or YouTube"
             },
             "query": {
                 "type": "STRING",

@@ -297,14 +297,14 @@ def _verified_click(
         time.sleep(0.6)
         after = _screen_thumbnail()
         if _screen_changed(before, after):
-            return f"Clicked '{target}' at ({x}, {y}) - the screen changed, it worked."
+            return f"Clicked '{target}' at ({x},{y}) - the screen changed, it worked."
         time.sleep(1.0)
         after = _screen_thumbnail()
         if _screen_changed(before, after):
-            return f"Clicked '{target}' at ({x}, {y}) - the screen changed, it worked."
+            return f"Clicked '{target}' at ({x},{y}) - the screen changed, it worked."
     except Exception as e:
-        return f"Clicked '{target}' at ({x}, {y}) but could not verify the screen change: {e}"
-    return f"Clicked '{target}' at ({x}, {y}) but NOTHING changed on screen - it may not have worked."
+        return f"Clicked '{target}' at ({x},{y}) but could not verify the screen change: {e}"
+    return f"Clicked '{target}' at ({x},{y}) but NOTHING changed on screen - it may not have worked."
 
 
 def _hotkey(*keys) -> str:
@@ -659,7 +659,7 @@ def computer_control(
             desc = params.get("description", "")
             coords = _screen_find(desc)
             if not coords:
-                return f"I could not find '{desc}' on screen"
+                return f"I could not find '{desc}' on screen."
             return _verified_click(desc, x=coords[0], y=coords[1])
 
         if action == "wait":
@@ -699,7 +699,7 @@ def computer_control(
 # ── Tool declaration (auto-discovered by core/action_loader.py) ──────────────
 TOOL = {
     "name": "computer_control",
-    "description": "Direct computer control: type, click, hotkeys, scroll, move mouse, screenshots, find elements on screen. Always report the tool result to the user honestly. Never claim success if the result says nothing changed or not found.",
+    "description": "Direct computer control: type, click, hotkeys, scroll, move mouse, screenshots, find elements on screen. Report the tool result to the user honestly. Never claim success when the result says nothing changed or not found.",
     "parameters": {
         "type": "OBJECT",
         "properties": {

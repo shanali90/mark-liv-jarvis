@@ -11,10 +11,6 @@ import threading
 import time
 from pathlib import Path
 
-from core.dpi import set_process_dpi_awareness
-
-set_process_dpi_awareness()
-
 import psutil
 
 if platform.system() == "Windows":
@@ -5215,6 +5211,10 @@ class MainWindow(QMainWindow):
             self.showFullScreen()
             self.raise_()
             self.activateWindow()
+        elif action == "SHOW_WINDOW":
+            self.showNormal()
+            self.raise_()
+            self.activateWindow()
         elif action == "HIDE":
             self.hide()
 
@@ -5310,22 +5310,20 @@ class JarvisUI:
             self._watchdog_timer.timeout.connect(self._watchdog.heartbeat)
             self._watchdog_timer.start()
             self._app.aboutToQuit.connect(self._watchdog.stop)
-        from memory.config_manager import get_wake_word_enabled
-        if not get_wake_word_enabled():
-            self._win.show()
-        else:
-            print("[UI] 🕶️ Stealth boot active — UI hidden, listening for wake word.")
+        self._win.showNormal()
+        self._win.raise_()
+        self._win.activateWindow()
 
     def bind_asyncio_loop(self, loop):
         if self._watchdog is not None:
             self._watchdog.bind_asyncio_loop(loop)
 
     def on_wake_transition(self, state: str):
-        """Transition window visibility: full-screen on AWAKE, hidden on SLEEPING."""
+        """Keep the visual interface accessible while reflecting wake state."""
         if state == "AWAKE":
             self._win._visibility_sig.emit("SHOW_FULLSCREEN")
         elif state == "SLEEPING":
-            self._win._visibility_sig.emit("HIDE")
+            self._win._visibility_sig.emit("SHOW_WINDOW")
 
     @property
     def muted(self) -> bool:
