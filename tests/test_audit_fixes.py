@@ -547,3 +547,17 @@ def test_saving_a_key_keeps_the_other_settings():
     assert "json.dumps({'os_system': os_name}" not in src.replace('"', "'"), \
         "settings.json must be merged, not replaced"
     assert "settings['os_system'] = os_name" in src.replace('"', "'")
+
+
+def test_wake_shows_a_normal_window_not_forced_fullscreen():
+    """Waking JARVIS must not force fullscreen: the user wants the window's own
+    minimise / maximise buttons. F11 still toggles fullscreen on request."""
+    import ast
+    src = (ROOT / "ui.py").read_text(encoding="utf-8")
+    tree = ast.parse(src)
+    fn = next(n for n in ast.walk(tree)
+              if isinstance(n, ast.FunctionDef) and n.name == "_apply_visibility")
+    calls = {c.func.attr for c in ast.walk(fn)
+             if isinstance(c, ast.Call) and isinstance(c.func, ast.Attribute)}
+    assert "showFullScreen" not in calls
+    assert "show" in calls and "raise_" in calls

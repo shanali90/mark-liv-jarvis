@@ -5214,9 +5214,14 @@ class MainWindow(QMainWindow):
 
     def _apply_visibility(self, action: str):
         if action == "SHOW_FULLSCREEN":
-            if not self.isVisible():
+            # A normal window (with minimise / maximise / close buttons), not
+            # forced fullscreen. F11 / the FULLSCREEN button still toggle it.
+            if self.isFullScreen():
+                self.showNormal()
+            elif self.isMinimized():
+                self.showNormal()
+            elif not self.isVisible():
                 self.show()
-            self.showFullScreen()
             self.raise_()
             self.activateWindow()
         elif action == "SHOW_WINDOW":
