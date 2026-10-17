@@ -494,6 +494,54 @@ def test_jarvis_window_remains_visible_while_wake_word_is_enabled():
     assert '"HIDE"' not in transition_text
 
 
+def test_connection_status_uses_a_qt_signal_for_cross_thread_updates():
+    tree = ast.parse((ROOT / "ui.py").read_text(encoding="utf-8"))
+    main_window = next(
+        node for node in tree.body
+        if isinstance(node, ast.ClassDef) and node.name == "MainWindow"
+    )
+    connection_signal = next(
+        node for node in main_window.body
+        if isinstance(node, ast.Assign)
+        and any(
+            isinstance(target, ast.Name) and target.id == "_connection_sig"
+            for target in node.targets
+        )
+    )
+    assert isinstance(connection_signal.value, ast.Call)
+    assert isinstance(connection_signal.value.func, ast.Name)
+    assert connection_signal.value.func.id == "pyqtSignal"
+
+    init = next(
+        node for node in main_window.body
+        if isinstance(node, ast.FunctionDef) and node.name == "__init__"
+    )
+    assert any(
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "connect"
+        and isinstance(node.func.value, ast.Attribute)
+        and node.func.value.attr == "_connection_sig"
+        for node in ast.walk(init)
+    )
+
+    setter = _ui_method("set_connection_status")
+    assert any(
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "emit"
+        and isinstance(node.func.value, ast.Attribute)
+        and node.func.value.attr == "_connection_sig"
+        for node in ast.walk(setter)
+    )
+    assert not any(
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "singleShot"
+        for node in ast.walk(setter)
+    )
+
+
 def test_saving_a_key_keeps_the_other_settings():
     src = ast.unparse(_ui_method("_on_setup_done"))
     assert "json.dumps({'os_system': os_name}" not in src.replace('"', "'"), \

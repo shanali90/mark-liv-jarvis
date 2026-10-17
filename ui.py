@@ -2952,6 +2952,7 @@ class RemoteKeyOverlay(QWidget):
 class MainWindow(QMainWindow):
     _log_sig        = pyqtSignal(str)
     _state_sig      = pyqtSignal(str)
+    _connection_sig = pyqtSignal(str, str)
     _content_sig    = pyqtSignal(str, str)   # (title, text) — thread-safe content display
     _reconfig_sig   = pyqtSignal()           # trigger setup overlay from any thread
     _camera_sig     = pyqtSignal(bytes)      # show camera frame preview (small overlay)
@@ -3112,6 +3113,7 @@ class MainWindow(QMainWindow):
 
         self._log_sig.connect(self._log.append_log)
         self._state_sig.connect(self._apply_state)
+        self._connection_sig.connect(self._apply_connection_status)
         self._content_sig.connect(self._show_content)
         self._reconfig_sig.connect(self._show_setup)
         self._camera_sig.connect(self._show_camera_frame)
@@ -5204,6 +5206,12 @@ class MainWindow(QMainWindow):
         self.hud.state    = state
         self.hud.speaking = (state == "SPEAKING")
 
+    def _apply_connection_status(self, status: str, color_hex: str):
+        self._conn_status_lbl.setText(status)
+        self._conn_status_lbl.setStyleSheet(
+            f"color: {color_hex}; background: transparent; padding-left: 8px;"
+        )
+
     def _apply_visibility(self, action: str):
         if action == "SHOW_FULLSCREEN":
             if not self.isVisible():
@@ -5504,11 +5512,7 @@ class JarvisUI:
 
     def set_connection_status(self, status: str, color_hex: str):
         """Thread-safe: Update the connection status indicator in the header."""
-        def _update():
-            if hasattr(self._win, "_conn_status_lbl"):
-                self._win._conn_status_lbl.setText(status)
-                self._win._conn_status_lbl.setStyleSheet(f"color: {color_hex}; background: transparent; padding-left: 8px;")
-        QTimer.singleShot(0, _update)
+        self._win._connection_sig.emit(status, color_hex)
 
     def show_quiz(self, topic: str, questions, grade=None) -> None:
         """Thread-safe: put an interactive quiz on the board.
