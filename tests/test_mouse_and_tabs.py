@@ -74,6 +74,55 @@ def test_screen_click_not_found_does_not_click(monkeypatch):
     assert mouse.clicks == []
 
 
+def test_screen_find_uses_primary_monitor_and_retries_center_crop(monkeypatch):
+    mouse = _install_mouse(monkeypatch, FakeMouse(size=(800, 400)))
+    primary = {"left": 100, "top": 50, "width": 400, "height": 200}
+
+    class FakeShot:
+        size = (400, 200)
+        bgra = bytes((0, 0, 0, 255)) * (400 * 200)
+
+    class FakeMss:
+        monitors = [
+            {"left": -500, "top": 0, "width": 1000, "height": 600},
+            primary,
+        ]
+
+        def __init__(self):
+            self.grabbed = []
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def grab(self, monitor):
+            self.grabbed.append(monitor)
+            return FakeShot()
+
+    capture = FakeMss()
+    monkeypatch.setitem(sys.modules, "mss", SimpleNamespace(mss=lambda: capture))
+    responses = iter((
+        SimpleNamespace(text="NOT_FOUND"),
+        SimpleNamespace(text="[450, 450, 550, 550]"),
+    ))
+    calls = []
+
+    def fake_gemini_call(*args, **kwargs):
+        calls.append((args, kwargs))
+        return next(responses)
+
+    from core import gemini
+
+    monkeypatch.setattr(gemini, "call", fake_gemini_call)
+
+    assert computer_control._screen_find("Save button") == (400, 200)
+    assert capture.grabbed == [primary]
+    assert len(calls) == 2
+    assert mouse.size() == (800, 400)
+
+
 def test_click_verification_reports_unchanged_and_changed(monkeypatch):
     mouse = _install_mouse(monkeypatch)
     monkeypatch.setattr(computer_control.time, "sleep", lambda _seconds: None)
@@ -96,6 +145,32 @@ def test_click_verification_reports_unchanged_and_changed(monkeypatch):
     )
     assert "the screen changed, it worked." in result
     assert mouse.clicks[-1] == (500, 300, "left", 2)
+
+    frames = iter((same, changed))
+    monkeypatch.setattr(computer_control, "_screen_thumbnail", lambda: next(frames))
+    result = computer_control.computer_control(
+        {"action": "right_click", "x": 500, "y": 300}
+    )
+    assert "the screen changed, it worked." in result
+    assert mouse.clicks[-1] == (500, 300, "right", 1)
+
+
+def test_found_screen_click_is_verified(monkeypatch):
+    mouse = _install_mouse(monkeypatch)
+    monkeypatch.setattr(computer_control.time, "sleep", lambda _seconds: None)
+    frames = iter((
+        np.zeros((36, 64), dtype=np.uint8),
+        np.full((36, 64), 255, dtype=np.uint8),
+    ))
+    monkeypatch.setattr(computer_control, "_screen_thumbnail", lambda: next(frames))
+    monkeypatch.setattr(computer_control, "_screen_find", lambda _description: (500, 400))
+
+    result = computer_control.computer_control(
+        {"action": "screen_click", "description": "Save"}
+    )
+
+    assert result == "Clicked 'Save' at (500, 400) - the screen changed, it worked."
+    assert mouse.clicks == [(500, 400, "left", 1)]
 
 
 def test_mouse_position_mismatch_retries_once_and_reports_failure(monkeypatch):
