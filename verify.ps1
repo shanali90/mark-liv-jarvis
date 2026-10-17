@@ -65,6 +65,7 @@ Report-Check "pyflakes" $pyflakesPassed
 Write-Output "=== main.py startup: wait 40 seconds and inspect only this run's log bytes ==="
 $StartedPid = $null
 $TreePids = @()
+$TreeIdentity = @{}
 $AppStarted = $false
 $LogPath = Join-Path $Root "logs\jarvis_activity.log"
 $StdoutPath = Join-Path $Root "logs\verify_main.stdout.log"
@@ -106,6 +107,13 @@ try {
                     }
                 }
             }
+            $TreeProcessIds = @($StartedPid) + $TreePids
+            foreach ($Process in $Processes) {
+                $ProcessId = [int]$Process.ProcessId
+                if ($TreeProcessIds -contains $ProcessId -and $Process.CreationDate) {
+                    $TreeIdentity[[string]$ProcessId] = ([datetime]$Process.CreationDate).ToUniversalTime().Ticks
+                }
+            }
             for ($Index = $TreePids.Count - 1; $Index -ge 0; $Index--) {
                 Stop-Process -Id $TreePids[$Index] -Force -ErrorAction SilentlyContinue
             }
@@ -139,8 +147,9 @@ if ($ConnectedLine) {
 $TreeStillRunning = @(
     Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
         Where-Object {
-            [int]$_.ProcessId -eq $StartedPid -or
-            $TreePids -contains [int]$_.ProcessId
+            $ProcessId = [string][int]$_.ProcessId
+            $TreeIdentity.ContainsKey($ProcessId) -and
+                $TreeIdentity[$ProcessId] -eq ([datetime]$_.CreationDate).ToUniversalTime().Ticks
         }
 )
 if ($TreeStillRunning.Count -eq 0) {
