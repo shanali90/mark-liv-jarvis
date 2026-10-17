@@ -701,3 +701,22 @@ def test_ui_refresh_talk_btns_does_not_eagerly_import_hotkey():
     ]
     assert "chord_label" not in top_imports
 
+
+def test_hud_canvas_steps_and_updates_in_sleeping_state():
+    """HudCanvas._step must not return early or skip avatar.step when state is SLEEPING."""
+    src = (ROOT / "ui.py").read_text(encoding="utf-8")
+    tree = ast.parse(src)
+    hud_canvas = next(n for n in ast.walk(tree)
+                      if isinstance(n, ast.ClassDef) and n.name == "HudCanvas")
+    step_fn = next(n for n in hud_canvas.body
+                   if isinstance(n, ast.FunctionDef) and n.name == "_step")
+    for node in ast.walk(step_fn):
+        if isinstance(node, ast.If):
+            cond_src = ast.unparse(node.test)
+            if 'self.state == "SLEEPING"' in cond_src or "self.state == 'SLEEPING'" in cond_src:
+                assert not any(isinstance(stmt, ast.Return) for stmt in node.body), \
+                    "HudCanvas._step must not return early on SLEEPING"
+            if 'self.state != "SLEEPING"' in cond_src or "self.state != 'SLEEPING'" in cond_src:
+                assert False, "avatar.step must not be skipped on SLEEPING"
+
+
