@@ -11,6 +11,10 @@ import threading
 import time
 from pathlib import Path
 
+from core.dpi import set_process_dpi_awareness
+
+set_process_dpi_awareness()
+
 import psutil
 
 if platform.system() == "Windows":

@@ -4,15 +4,13 @@ import platform
 import string
 import subprocess
 import sys
+import numpy as np
+from core.dpi import set_process_dpi_awareness
 
 
+set_process_dpi_awareness()
 if platform.system() == "Windows":
     _WIN_HIDE: dict = {"creationflags": subprocess.CREATE_NO_WINDOW}
-    try:
-        import ctypes
-        ctypes.windll.shcore.SetProcessDpiAwareness(2)
-    except Exception:
-        pass
 else:
 
     _WIN_HIDE: dict = {}
@@ -43,6 +41,7 @@ def _base_dir() -> Path:
 _BASE         = _base_dir()
 _CONFIG_PATH  = _BASE / "config" / "settings.json"
 _MEMORY_PATH  = _BASE / "memory" / "long_term.json"
+_CLICK_CHANGE_THRESHOLD = 2.0
 
 def _load_config() -> dict:
     try:
@@ -196,13 +195,116 @@ def _smart_type(text: str, clear_first: bool = True) -> str:
     return f"Smart-typed: {text[:60]}{'…' if len(text) > 60 else ''}"
 
 
-def _click(x=None, y=None, button: str = "left", clicks: int = 1) -> str:
+def _screen_to_mouse(x: int, y: int, monitor: dict | None = None) -> tuple[int, int]:
+    """Convert physical screenshot coordinates into PyAutoGUI screen coordinates."""
     _require_pyautogui()
-    if x is not None and y is not None:
-        pyautogui.click(x, y, button=button, clicks=clicks)
-        return f"{'Double-c' if clicks == 2 else 'C'}licked ({x}, {y}) [{button}]"
-    pyautogui.click(button=button, clicks=clicks)
-    return f"Clicked at current position [{button}]"
+    if monitor is None:
+        import mss
+
+        with mss.mss() as sct:
+            monitor = dict(sct.monitors[1])
+
+    screen_width, screen_height = pyautogui.size()
+    scale_x = screen_width / monitor["width"]
+    scale_y = screen_height / monitor["height"]
+    return (
+        round((x - monitor["left"]) * scale_x),
+        round((y - monitor["top"]) * scale_y),
+    )
+
+
+def _clamp_to_screen(x: int, y: int) -> tuple[int, int]:
+    width, height = pyautogui.size()
+    return max(1, min(int(x), width - 2)), max(1, min(int(y), height - 2))
+
+
+def _move_exact(x: int, y: int) -> tuple[int, int] | None:
+    """Move smoothly to a target, retry once, and verify the resulting position."""
+    x, y = _clamp_to_screen(x, y)
+    for _ in range(2):
+        pyautogui.moveTo(x, y, duration=0.25)
+        actual_x, actual_y = pyautogui.position()
+        if abs(actual_x - x) <= 3 and abs(actual_y - y) <= 3:
+            return x, y
+    return None
+
+
+def _click(
+    x=None,
+    y=None,
+    button: str = "left",
+    clicks: int = 1,
+    *,
+    current_position: bool = False,
+) -> str:
+    _require_pyautogui()
+    if x is None or y is None:
+        if not current_position:
+            return "I need a target. Tell me what to click."
+        x, y = pyautogui.position()
+
+    x, y = _clamp_to_screen(x, y)
+    if _move_exact(x, y) is None:
+        actual_x, actual_y = pyautogui.position()
+        return (
+            f"Could not position the mouse at ({x}, {y}); "
+            f"it remained at ({actual_x}, {actual_y}). Nothing was clicked."
+        )
+    pyautogui.click(x, y, button=button, clicks=clicks)
+    return f"Clicked ({x}, {y}) [{button}]"
+
+
+def _screen_thumbnail() -> "np.ndarray":
+    """Capture a compact grayscale image of the primary monitor for verification."""
+    import mss
+    import PIL.Image
+
+    with mss.mss() as sct:
+        shot = sct.grab(sct.monitors[1])
+    image = PIL.Image.frombytes("RGB", shot.size, shot.bgra, "raw", "BGRX")
+    return np.asarray(image.convert("L").resize((64, 36)), dtype=np.uint8)
+
+
+def _screen_changed(before, after) -> bool:
+    return float(np.mean(np.abs(before.astype(np.int16) - after.astype(np.int16)))) > _CLICK_CHANGE_THRESHOLD
+
+
+def _verified_click(
+    target: str,
+    x=None,
+    y=None,
+    button: str = "left",
+    clicks: int = 1,
+    *,
+    current_position: bool = False,
+) -> str:
+    if x is None or y is None:
+        if not current_position:
+            return "I need a target. Tell me what to click."
+        x, y = pyautogui.position()
+    x, y = _clamp_to_screen(x, y)
+
+    try:
+        before = _screen_thumbnail()
+    except Exception as e:
+        return f"Could not verify the click on '{target}': screen capture failed: {e}"
+
+    result = _click(x, y, button, clicks)
+    if result.startswith("Could not") or result.startswith("I need"):
+        return result
+
+    try:
+        time.sleep(0.6)
+        after = _screen_thumbnail()
+        if _screen_changed(before, after):
+            return f"Clicked '{target}' at ({x}, {y}) - the screen changed, it worked."
+        time.sleep(1.0)
+        after = _screen_thumbnail()
+        if _screen_changed(before, after):
+            return f"Clicked '{target}' at ({x}, {y}) - the screen changed, it worked."
+    except Exception as e:
+        return f"Clicked '{target}' at ({x}, {y}) but could not verify the screen change: {e}"
+    return f"Clicked '{target}' at ({x}, {y}) but NOTHING changed on screen - it may not have worked."
 
 
 def _hotkey(*keys) -> str:
@@ -225,17 +327,35 @@ def _scroll(direction: str = "down", amount: int = 3) -> str:
     return f"Scrolled {direction} ×{amount}"
 
 
-def _move(x: int, y: int, duration: float = 0.3) -> str:
+def _move(x: int, y: int, duration: float = 0.25) -> str:
     _require_pyautogui()
-    pyautogui.moveTo(x, y, duration=duration)
-    return f"Mouse → ({x}, {y})"
+    target = _clamp_to_screen(x, y)
+    if _move_exact(*target) is None:
+        actual_x, actual_y = pyautogui.position()
+        return (
+            f"Mouse move failed: target ({target[0]}, {target[1]}), "
+            f"actual ({actual_x}, {actual_y}) after retry."
+        )
+    return f"Mouse moved to ({target[0]}, {target[1]})."
 
 
 def _drag(x1: int, y1: int, x2: int, y2: int, duration: float = 0.5) -> str:
     _require_pyautogui()
-    pyautogui.moveTo(x1, y1, duration=0.2)
-    pyautogui.dragTo(x2, y2, duration=duration, button="left")
-    return f"Dragged ({x1},{y1}) → ({x2},{y2})"
+    x1, y1 = _clamp_to_screen(x1, y1)
+    x2, y2 = _clamp_to_screen(x2, y2)
+    for attempt in range(2):
+        if _move_exact(x1, y1) is None:
+            return f"Drag failed: could not position at start ({x1}, {y1})."
+        pyautogui.dragTo(x2, y2, duration=duration, button="left")
+        actual_x, actual_y = pyautogui.position()
+        if abs(actual_x - x2) <= 3 and abs(actual_y - y2) <= 3:
+            return f"Dragged ({x1},{y1}) → ({x2},{y2})"
+        if attempt == 1:
+            return (
+                f"Drag ended at ({actual_x}, {actual_y}), not "
+                f"({x2}, {y2}); the target was not reached."
+            )
+    return f"Drag failed to reach ({x2}, {y2})."
 
 
 def _clipboard_get() -> str:
@@ -329,65 +449,73 @@ def _focus_window(title: str) -> str:
     return f"focus_window: unknown OS '{os_name}'"
 
 def _screen_find(description: str, crop_box: tuple = None) -> tuple[int, int] | None:
-    api_key = _get_api_key()
-    if not api_key:
-        print("[ComputerControl] No API key for screen_find")
-        return None
-
     try:
         import mss
-        import mss.tools
         from google.genai import types as gtypes
         import io
         import PIL.Image
 
         _require_pyautogui()
         with mss.mss() as sct:
-            # monitors[0] is the bounding box of all monitors combined
-            monitor = sct.monitors[0]
-            left, top = monitor["left"], monitor["top"]
-            w, h = monitor["width"], monitor["height"]
-            
+            monitor = dict(sct.monitors[1])
             shot = sct.grab(monitor)
             img = PIL.Image.frombytes("RGB", shot.size, shot.bgra, "raw", "BGRX")
-            
+
             if crop_box:
-                # crop_box is (crop_left, crop_top, crop_right, crop_bottom)
-                img = img.crop(crop_box)
-                w, h = img.size
-                left, top = crop_box[0], crop_box[1]
-
-            buf = io.BytesIO()
-            img.save(buf, format="PNG")
-            image_bytes = buf.getvalue()
-
-        prompt = (
-            f"This is a screenshot of my screen. "
-            f"Find the UI element described as: '{description}'. "
-            f"If you find it, reply ONLY with its bounding box in the exact format: [ymin, xmin, ymax, xmax] "
-            f"where values are normalized between 0 and 1000. "
-            f"If the element is not visible, reply ONLY with: NOT_FOUND"
-        )
+                crop_left = max(0, crop_box[0] - monitor["left"])
+                crop_top = max(0, crop_box[1] - monitor["top"])
+                crop_right = min(monitor["width"], crop_box[2] - monitor["left"])
+                crop_bottom = min(monitor["height"], crop_box[3] - monitor["top"])
+                if crop_right <= crop_left or crop_bottom <= crop_top:
+                    return None
+                img = img.crop((crop_left, crop_top, crop_right, crop_bottom))
+                crop_origin = (monitor["left"] + crop_left, monitor["top"] + crop_top)
+            else:
+                crop_origin = (monitor["left"], monitor["top"])
 
         from core import gemini
-        response = gemini.call(
-            [gtypes.Part.from_bytes(data=image_bytes, mime_type="image/png"), prompt],
-            tier=gemini.FAST, timeout_ms=20_000,
-        )
-        if response is None:
-            return None
-
-        text = (response.text or "").strip()
-        if "NOT_FOUND" in text.upper():
-            return None
-
         import re
-        match = re.search(r"\[(\d+),\s*(\d+),\s*(\d+),\s*(\d+)\]", text)
-        if match:
+
+        def locate(image, origin):
+            buf = io.BytesIO()
+            image.save(buf, format="PNG")
+            prompt = (
+                f"This is a screenshot of my screen. Find the UI element described as: "
+                f"'{description}'. Reply ONLY with its tight bounding box in this exact "
+                f"format: [ymin, xmin, ymax, xmax], normalized from 0 to 1000. "
+                f"If it is not visible, reply ONLY with: NOT_FOUND"
+            )
+            response = gemini.call(
+                [gtypes.Part.from_bytes(data=buf.getvalue(), mime_type="image/png"), prompt],
+                tier=gemini.FAST, timeout_ms=20_000,
+            )
+            if response is None:
+                return "error", None
+            text = (response.text or "").strip()
+            if "NOT_FOUND" in text.upper():
+                return "not_found", None
+            match = re.search(r"\[(\d+),\s*(\d+),\s*(\d+),\s*(\d+)\]", text)
+            if not match:
+                return "error", None
             ymin, xmin, ymax, xmax = map(int, match.groups())
-            center_x = left + int(((xmin + xmax) / 2) * (w / 1000.0))
-            center_y = top + int(((ymin + ymax) / 2) * (h / 1000.0))
-            return center_x, center_y
+            physical_x = origin[0] + int(((xmin + xmax) / 2) * image.width / 1000.0)
+            physical_y = origin[1] + int(((ymin + ymax) / 2) * image.height / 1000.0)
+            return "found", _screen_to_mouse(physical_x, physical_y, monitor)
+
+        status, coords = locate(img, crop_origin)
+        if status == "found":
+            return coords
+        if status != "not_found":
+            return None
+
+        # Retry once on a smaller center crop; coordinates remain relative to
+        # the primary monitor so multi-monitor offsets are preserved.
+        crop_left, crop_top = img.width // 4, img.height // 4
+        crop_right, crop_bottom = crop_left + img.width // 2, crop_top + img.height // 2
+        retry_img = img.crop((crop_left, crop_top, crop_right, crop_bottom))
+        retry_origin = (crop_origin[0] + crop_left, crop_origin[1] + crop_top)
+        status, coords = locate(retry_img, retry_origin)
+        return coords if status == "found" else None
 
     except Exception as e:
         print(f"[ComputerControl] ERROR screen_find failed: {e}")
@@ -465,13 +593,21 @@ def computer_control(
             )
 
         if action in ("click", "left_click"):
-            return _click(params.get("x"), params.get("y"), "left", 1)
+            return _verified_click(
+                "current position" if params.get("current_position") else "screen coordinates",
+                params.get("x"), params.get("y"), "left", 1,
+                current_position=params.get("current_position", False),
+            )
 
         if action == "double_click":
-            return _click(params.get("x"), params.get("y"), "left", 2)
+            return _verified_click(
+                "screen coordinates", params.get("x"), params.get("y"), "left", 2,
+            )
 
         if action == "right_click":
-            return _click(params.get("x"), params.get("y"), "right", 1)
+            return _verified_click(
+                "screen coordinates", params.get("x"), params.get("y"), "right", 1,
+            )
 
         if action == "move":
             return _move(int(params.get("x", 0)), int(params.get("y", 0)))
@@ -522,26 +658,9 @@ def computer_control(
         if action == "screen_click":
             desc = params.get("description", "")
             coords = _screen_find(desc)
-            if coords:
-                time.sleep(0.2)
-                _click(x=coords[0], y=coords[1])
-                time.sleep(1.0)
-                
-                # Verification step
-                check_coords = _screen_find(desc)
-                if check_coords:
-                    # Still there? Refined crop retry
-                    print(f"[ComputerControl] Element '{desc}' still visible, refining crop...")
-                    cx, cy = coords
-                    crop_box = (int(cx - 200), int(cy - 200), int(cx + 200), int(cy + 200))
-                    refined = _screen_find(desc, crop_box=crop_box)
-                    if refined:
-                        time.sleep(0.2)
-                        _click(x=refined[0], y=refined[1])
-                        return f"Clicked '{desc}', verified and re-clicked at {refined}"
-                    return f"Clicked '{desc}', verified gone on refined crop."
-                return f"Clicked '{desc}' at {coords} (verified successful)"
-            return f"Element not found on screen: '{desc}'" 
+            if not coords:
+                return f"I could not find '{desc}' on screen"
+            return _verified_click(desc, x=coords[0], y=coords[1])
 
         if action == "wait":
             secs = float(params.get("seconds", 1.0))
@@ -580,7 +699,7 @@ def computer_control(
 # ── Tool declaration (auto-discovered by core/action_loader.py) ──────────────
 TOOL = {
     "name": "computer_control",
-    "description": "Direct computer control: type, click, hotkeys, scroll, move mouse, screenshots, find elements on screen.",
+    "description": "Direct computer control: type, click, hotkeys, scroll, move mouse, screenshots, find elements on screen. Always report the tool result to the user honestly. Never claim success if the result says nothing changed or not found.",
     "parameters": {
         "type": "OBJECT",
         "properties": {
@@ -599,6 +718,10 @@ TOOL = {
             "y": {
                 "type": "INTEGER",
                 "description": "Y coordinate"
+            },
+            "current_position": {
+                "type": "BOOLEAN",
+                "description": "Explicitly click the current pointer location when no x/y target is given"
             },
             "keys": {
                 "type": "STRING",

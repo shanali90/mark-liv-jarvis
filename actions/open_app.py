@@ -143,10 +143,19 @@ def _as_url(name: str) -> str | None:
     return t if t.startswith(("http://", "https://")) else "https://" + t
 
 
-def _open_url(url: str) -> bool:
+def _open_url(url: str) -> str | bool:
     """Open an http(s) URL in Chrome if present, else the default browser."""
     if not url.lower().startswith(("http://", "https://")):
         return False
+    from core.tab_finder import find_and_focus_existing, service_name
+
+    name = service_name(url)
+    try:
+        if find_and_focus_existing(url):
+            return f"Switched to your already-open {name} tab"
+    except Exception as e:
+        print(f"[open_app] Existing Chrome tab check failed: {e}")
+
     chrome = shutil.which("chrome") or shutil.which("google-chrome")
     if not chrome and _SYSTEM == "Windows":
         for base in (os.environ.get("PROGRAMFILES"), os.environ.get("PROGRAMFILES(X86)"),
@@ -158,14 +167,15 @@ def _open_url(url: str) -> bool:
     if chrome:
         try:
             subprocess.Popen([chrome, url], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            return True
+            return f"Opened a new {name} tab"
         except Exception as e:
             print(f"[open_app] Chrome launch failed: {e}")
     try:
-        return bool(webbrowser.open(url))
+        if webbrowser.open(url):
+            return f"Opened a new {name} tab"
     except Exception as e:
         print(f"[open_app] browser open failed: {e}")
-        return False
+    return False
 
 
 def _find_start_app(name: str) -> str | None:
@@ -211,7 +221,14 @@ def _resolve_and_open(app_name: str) -> str | None:
     """Open a web address or a known web service. None = not handled here."""
     url = _as_url(app_name)
     if url:
-        return f"Opened {url} in the browser." if _open_url(url) else f"Could not open {url}."
+        result = _open_url(url)
+        if isinstance(result, str):
+            return result
+        if result:
+            from core.tab_finder import service_name
+
+            return f"Opened a new {service_name(url)} tab"
+        return f"Could not open {url}."
     key = app_name.strip().lower()
     site = _WEB_SERVICES.get(key)
     if not site:
@@ -219,7 +236,10 @@ def _resolve_and_open(app_name: str) -> str | None:
     appid = _find_start_app(app_name)
     if appid and _launch_start_app(appid):
         return f"Opened the {app_name} app."
-    if _open_url(site):
+    browser_result = _open_url(site)
+    if isinstance(browser_result, str):
+        return browser_result
+    if browser_result:
         return f"{app_name} app is not installed, so I opened {site} in the browser."
     return f"Could not open {app_name}: no app found and the browser would not open."
 
@@ -410,6 +430,17 @@ def open_app(
         return f"Unsupported operating system: {_SYSTEM}"
 
     normalized = _normalize(app_name)
+
+    if _as_url(app_name) or app_name.strip().lower() in _WEB_SERVICES:
+        try:
+            smart = _resolve_and_open(app_name)
+        except Exception as e:
+            print(f"[open_app] resolver error: {e}")
+            smart = None
+        if smart is not None:
+            if player:
+                player.write_log(f"[open_app] {smart}")
+            return smart
 
     # ── Section 10 & 12: Generic app reuse — focus existing window if already open ──
     try:

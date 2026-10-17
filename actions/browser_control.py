@@ -412,23 +412,28 @@ def _open_native(url: str, browser_name: Optional[str] = None) -> str:
     chosen = (browser_name or "chrome").lower().strip()
     target_browser = _ALIASES.get(chosen, chosen)
 
-    # ── Section 10 & 12: Generic app/tab reuse — focus existing window if already open ──
     try:
-        from actions.window_manager import switch_to_window_internal
-        if not url or "chrome" in target_browser:
-            # If user just asked to open browser without specific URL, focus existing Chrome
-            if not url and switch_to_window_internal("chrome"):
-                print("[Browser] found existing Chrome window, focused")
-                return "Switched focus to existing Google Chrome window."
-        if url:
-            # If opening a site like WhatsApp Web, YouTube, GitHub, check if window title matches
-            domain_parts = url.split("://")[-1].split("/")[0].replace("www.", "").split(".")
-            domain = domain_parts[-2] if len(domain_parts) >= 2 else domain_parts[0]
-            if len(domain) > 2 and switch_to_window_internal(domain):
-                print(f"[Browser] found existing window for '{domain}', focused")
-                return f"Switched focus to existing open window for {domain}."
+        from core.tab_finder import find_and_focus_existing, service_name
+
+        if target_browser == "chrome" and find_and_focus_existing(url or "chrome"):
+            name = service_name(url or "chrome")
+            return f"Switched to your already-open {name} tab"
     except Exception as e:
-        print(f"[Browser] Window reuse check error: {e}")
+        print(f"[Browser] Chrome tab reuse check error: {e}")
+
+    if _OS != "Windows":
+        try:
+            from actions.window_manager import switch_to_window_internal
+
+            if not url and switch_to_window_internal("chrome"):
+                return "Switched to your already-open Chrome tab"
+            if url:
+                domain = url.split("://")[-1].split("/")[0].replace("www.", "").split(".")
+                name = domain[-2] if len(domain) >= 2 else domain[0]
+                if len(name) > 2 and switch_to_window_internal(name):
+                    return f"Switched to your already-open {name.title()} tab"
+        except Exception as e:
+            print(f"[Browser] Window reuse check error: {e}")
 
     chrome_exe = _find_chrome()
     if target_browser == "chrome" and chrome_exe:
@@ -443,7 +448,9 @@ def _open_native(url: str, browser_name: Optional[str] = None) -> str:
                 args,
                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
             )
-            return f"Opened in Chrome: {url}" if url else "Opened Google Chrome."
+            from core.tab_finder import service_name
+
+            return f"Opened a new {service_name(url)} tab" if url else "Opened a new Chrome tab"
         except Exception as e:
             print(f"[Browser] Chrome launch failed: {e}")
 
@@ -464,13 +471,15 @@ def _open_native(url: str, browser_name: Optional[str] = None) -> str:
     # Default OS browser fallback — single invocation, no multi-browser cascade
     if url:
         try:
+            from core.tab_finder import service_name
+
             if _OS == "Windows":
                 os.startfile(url)
             elif _OS == "Darwin":
                 subprocess.run(["open", url], check=True, timeout=10)
             else:
                 subprocess.Popen(["xdg-open", url], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            return f"Opened in default browser: {url}"
+            return f"Opened a new {service_name(url)} tab"
         except Exception as e:
             return f"Error opening URL '{url}': {e}"
 
@@ -478,7 +487,7 @@ def _open_native(url: str, browser_name: Optional[str] = None) -> str:
         # Section 16 disabled for Phase 2:
         # subprocess.Popen([chrome_exe, "--remote-debugging-port=9222"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         subprocess.Popen([chrome_exe], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        return "Opened Google Chrome."
+        return "Opened a new Chrome tab"
 
     return "Error: Could not locate Google Chrome on this system."
 
@@ -847,13 +856,29 @@ class _BrowserSession:
         return f"Could not find input: '{description}'"
 
     async def new_tab(self, url: str = "") -> str:
+        if url and self._context:
+            normalized = _normalize_url(url)
+            domain = normalized.split("://")[-1].split("/")[0].replace("www.", "").lower()
+            if len(domain) > 3:
+                for existing in self._context.pages:
+                    if not existing.is_closed() and domain in existing.url.lower():
+                        await existing.bring_to_front()
+                        self._page = existing
+                        from core.tab_finder import service_name
+
+                        return f"Switched to your already-open {service_name(normalized)} tab"
         page = await self._get_page()
         ctx  = page.context
         new  = await ctx.new_page()
         self._page = new
         if url:
-            return await self.go_to(url)
-        return "New tab opened."
+            result = await self.go_to(url)
+            if result.startswith("Opened:"):
+                from core.tab_finder import service_name
+
+                return f"Opened a new {service_name(url)} tab"
+            return result
+        return "Opened a new Chrome tab"
 
     async def close_tab(self) -> str:
         page = self._page
@@ -1038,6 +1063,22 @@ def browser_control(
     # opens here. The only exception: if an automation flow is already running,
     # navigation continues in that window (so multi-step tasks aren't split).
     if action in ("go_to", "search", "new_tab"):
+        if action == "new_tab" and _OS == "Windows" and _registry.has(browser):
+            native_url = params.get("url", "").strip()
+            if native_url:
+                try:
+                    from core.tab_finder import find_and_focus_existing, service_name
+
+                    if find_and_focus_existing(_normalize_url(native_url)):
+                        result = (
+                            "Switched to your already-open "
+                            f"{service_name(native_url)} tab"
+                        )
+                        _log(player, result)
+                        return result
+                except Exception as e:
+                    print(f"[Browser] Chrome tab reuse check error: {e}")
+
         if _registry.has(browser):
             sess = _registry.get(browser)
             try:
@@ -1063,7 +1104,7 @@ def browser_control(
             nav_url = params.get("url", "").strip()
 
         result = _open_native(nav_url, browser)
-        if result.startswith("Opened") and nav_url:
+        if result.startswith("Opened a new") and nav_url:
             _registry.note_native_url(_normalize_url(nav_url))
         _log(player, result)
         return result
