@@ -18,15 +18,15 @@ import shutil
 import subprocess
 import threading
 from pathlib import Path
-from typing import Optional
+from typing import Optional, TYPE_CHECKING
 
-from playwright.async_api import (
-    async_playwright,
-    BrowserContext,
-    Page,
-    Playwright,
-    TimeoutError as PlaywrightTimeout,
-)
+if TYPE_CHECKING:
+    from playwright.async_api import BrowserContext, Page, Playwright
+
+class PlaywrightTimeout(Exception):
+    """Placeholder replaced by real playwright.async_api.TimeoutError once started."""
+    pass
+
 _OS = platform.system()   # "Windows" | "Darwin" | "Linux"
 
 def _normalize_url(url: str) -> str:
@@ -530,6 +530,9 @@ class _BrowserSession:
         self._loop.run_forever()
 
     async def _async_init(self):
+        global PlaywrightTimeout
+        from playwright.async_api import async_playwright, TimeoutError as _PT
+        PlaywrightTimeout = _PT
         self._pw = await async_playwright().start()
 
     def run(self, coro, timeout: int = 60) -> str:

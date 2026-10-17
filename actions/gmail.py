@@ -1,17 +1,18 @@
 import os
 import base64
 from email.message import EmailMessage
-from googleapiclient.discovery import build
-from google_auth_oauthlib.flow import InstalledAppFlow
-from google.auth.transport.requests import Request
-from google.oauth2.credentials import Credentials
-import google.auth.exceptions
 
 SCOPES = ['https://www.googleapis.com/auth/gmail.modify']
 CREDENTIALS_FILE = 'config/gmail_credentials.json'
 TOKEN_FILE = 'config/gmail_token.json'
 
 def _get_gmail_service():
+    from googleapiclient.discovery import build
+    from google_auth_oauthlib.flow import InstalledAppFlow
+    from google.auth.transport.requests import Request
+    from google.oauth2.credentials import Credentials
+    import google.auth.exceptions
+
     creds = None
     if os.path.exists(TOKEN_FILE):
         # JSON, not pickle: unpickling a tampered token file runs arbitrary code.

@@ -1,4 +1,4 @@
-﻿#computer_control.py
+#computer_control.py
 import json
 import platform
 import string
@@ -18,19 +18,23 @@ import time
 import random
 from pathlib import Path
 
-try:
-    import pyautogui
-    pyautogui.FAILSAFE = True
-    pyautogui.PAUSE    = 0.05
-    _PYAUTOGUI = True
-except ImportError:
-    _PYAUTOGUI = False
+pyautogui = None
+_PYAUTOGUI = None
 
-try:
-    import pyperclip
-    _PYPERCLIP = True
-except ImportError:
-    _PYPERCLIP = False
+pyperclip = None
+_PYPERCLIP = None
+
+def _get_pyperclip():
+    global pyperclip, _PYPERCLIP
+    if _PYPERCLIP is None:
+        try:
+            import pyperclip as _pc
+            pyperclip = _pc
+            _PYPERCLIP = True
+        except ImportError:
+            _PYPERCLIP = False
+    return _PYPERCLIP
+
 
 def _base_dir() -> Path:
     if getattr(sys, "frozen", False):
@@ -93,8 +97,19 @@ def _safe_screenshot_path(requested: str | None) -> Path:
     return fallback
 
 def _require_pyautogui():
-    if not _PYAUTOGUI:
+    global pyautogui, _PYAUTOGUI
+    if _PYAUTOGUI is None:
+        try:
+            import pyautogui as _pa
+            _pa.FAILSAFE = True
+            _pa.PAUSE    = 0.05
+            pyautogui = _pa
+            _PYAUTOGUI = True
+        except ImportError:
+            _PYAUTOGUI = False
+    if not _PYAUTOGUI or pyautogui is None:
         raise RuntimeError("PyAutoGUI not installed. Run: pip install pyautogui")
+
 
 _FIRST_NAMES = [
     "Alex", "Jordan", "Taylor", "Morgan", "Casey", "Riley", "Drew", "Quinn",
@@ -184,7 +199,7 @@ def _smart_type(text: str, clear_first: bool = True) -> str:
         _clear_field()
         time.sleep(0.1)
 
-    if len(text) > 20 and _PYPERCLIP:
+    if len(text) > 20 and _get_pyperclip():
         pyperclip.copy(text)
         time.sleep(0.1)
         paste_key = "command" if _get_os() == "mac" else "ctrl"
@@ -359,7 +374,7 @@ def _drag(x1: int, y1: int, x2: int, y2: int, duration: float = 0.5) -> str:
 
 
 def _clipboard_get() -> str:
-    if _PYPERCLIP:
+    if _get_pyperclip():
         return pyperclip.paste()
     _hotkey("ctrl", "c")
     time.sleep(0.2)
@@ -367,7 +382,7 @@ def _clipboard_get() -> str:
 
 
 def _clipboard_paste(text: str) -> str:
-    if _PYPERCLIP:
+    if _get_pyperclip():
         pyperclip.copy(text)
         time.sleep(0.1)
         _require_pyautogui()

@@ -6,6 +6,11 @@ logger = logging.getLogger(__name__)
 
 _WARNING_LOGGED = False
 _SECRET_NAME = re.compile(r"^[A-Za-z0-9_]+$")
+_KEYRING_CACHE: dict[str, str] = {}
+
+def clear_cache() -> None:
+    """Clear cached secrets (useful in tests and re-authentication)."""
+    _KEYRING_CACHE.clear()
 
 def get_secret(key_name: str) -> str:
     """Retrieve a secret from the environment or the OS keychain."""
@@ -17,6 +22,9 @@ def get_secret(key_name: str) -> str:
     secret = os.environ.get(environment_name)
     if secret:
         return secret
+
+    if key_name in _KEYRING_CACHE:
+        return _KEYRING_CACHE[key_name]
 
     try:
         import keyring
@@ -31,6 +39,7 @@ def get_secret(key_name: str) -> str:
             _WARNING_LOGGED = True
 
     if secret:
+        _KEYRING_CACHE[key_name] = secret
         return secret
 
     return ""
@@ -44,6 +53,7 @@ def set_secret(key_name: str, secret_value: str) -> bool:
     try:
         import keyring
         keyring.set_password("Jarvis", key_name, secret_value)
+        _KEYRING_CACHE[key_name] = secret_value
         return True
     except Exception as exc:
         logger.error(

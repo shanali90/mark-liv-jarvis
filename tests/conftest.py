@@ -21,7 +21,9 @@ class InMemoryKeyring:
 def memory_keyring(monkeypatch):
     import keyring
     import keyring.core
+    from core import vault
 
+    vault.clear_cache()
     backend = InMemoryKeyring()
     monkeypatch.delenv("GEMINI_API_KEY", raising=False)
     monkeypatch.setattr(keyring.core, "_keyring_backend", backend)

@@ -6,19 +6,71 @@ import subprocess
 import platform
 from pathlib import Path
 
-try:
-    import pyautogui
-    pyautogui.FAILSAFE = True
-    pyautogui.PAUSE    = 0.05
-    _PYAUTOGUI = True
-except ImportError:
-    _PYAUTOGUI = False
+_pyautogui_module = None
+_pyautogui_available = None
 
-try:
-    import pyperclip
-    _PYPERCLIP = True
-except ImportError:
-    _PYPERCLIP = False
+def _get_pyautogui():
+    global _pyautogui_module, _pyautogui_available
+    if _pyautogui_available is None:
+        try:
+            import pyautogui as _pa
+            _pa.FAILSAFE = True
+            _pa.PAUSE    = 0.05
+            _pyautogui_module = _pa
+            _pyautogui_available = True
+        except ImportError:
+            _pyautogui_available = False
+    return _pyautogui_module
+
+class _PyAutoGUIProxy:
+    def __getattr__(self, name):
+        mod = _get_pyautogui()
+        if mod is None:
+            raise RuntimeError("pyautogui is not installed. Run: pip install pyautogui")
+        return getattr(mod, name)
+
+    def __bool__(self):
+        _get_pyautogui()
+        return bool(_pyautogui_available)
+
+pyautogui = _PyAutoGUIProxy()
+
+class _LazyBool:
+    def __init__(self, check):
+        self._check = check
+
+    def __bool__(self):
+        return bool(self._check())
+
+_PYAUTOGUI = _LazyBool(lambda: (_get_pyautogui() is not None))
+
+_pyperclip_module = None
+_pyperclip_available = None
+
+def _get_pyperclip():
+    global _pyperclip_module, _pyperclip_available
+    if _pyperclip_available is None:
+        try:
+            import pyperclip as _pc
+            _pyperclip_module = _pc
+            _pyperclip_available = True
+        except ImportError:
+            _pyperclip_available = False
+    return _pyperclip_module
+
+class _PyperclipProxy:
+    def __getattr__(self, name):
+        mod = _get_pyperclip()
+        if mod is None:
+            raise RuntimeError("pyperclip is not installed. Run: pip install pyperclip")
+        return getattr(mod, name)
+
+    def __bool__(self):
+        _get_pyperclip()
+        return bool(_pyperclip_available)
+
+pyperclip = _PyperclipProxy()
+_PYPERCLIP = _LazyBool(lambda: (_get_pyperclip() is not None))
 
 from core import confirm
 from core.undo import push_undo

@@ -17,17 +17,69 @@ try:
 except ImportError:
     _NUMPY = False
 
-try:
-    import requests
-    _REQUESTS_OK = True
-except ImportError:
-    _REQUESTS_OK = False
+_requests_module = None
+_requests_ok = None
 
-try:
-    from youtube_transcript_api import YouTubeTranscriptApi
-    _TRANSCRIPT_OK = True
-except ImportError:
-    _TRANSCRIPT_OK = False
+def _get_requests():
+    global _requests_module, _requests_ok
+    if _requests_ok is None:
+        try:
+            import requests as _req
+            _requests_module = _req
+            _requests_ok = True
+        except ImportError:
+            _requests_ok = False
+    return _requests_module
+
+class _RequestsProxy:
+    def __getattr__(self, name):
+        mod = _get_requests()
+        if mod is None:
+            raise RuntimeError("requests is not installed. Run: pip install requests")
+        return getattr(mod, name)
+
+    def __bool__(self):
+        _get_requests()
+        return bool(_requests_ok)
+
+requests = _RequestsProxy()
+
+class _LazyBool:
+    def __init__(self, check):
+        self._check = check
+
+    def __bool__(self):
+        return bool(self._check())
+
+_REQUESTS_OK = _LazyBool(lambda: (_get_requests() is not None))
+
+_transcript_api = None
+_transcript_ok = None
+
+def _get_transcript_api():
+    global _transcript_api, _transcript_ok
+    if _transcript_ok is None:
+        try:
+            from youtube_transcript_api import YouTubeTranscriptApi as _api
+            _transcript_api = _api
+            _transcript_ok = True
+        except ImportError:
+            _transcript_ok = False
+    return _transcript_api
+
+class _TranscriptProxy:
+    def __getattr__(self, name):
+        api = _get_transcript_api()
+        if api is None:
+            raise RuntimeError("youtube_transcript_api is not installed")
+        return getattr(api, name)
+
+    def __bool__(self):
+        _get_transcript_api()
+        return bool(_transcript_ok)
+
+YouTubeTranscriptApi = _TranscriptProxy()
+_TRANSCRIPT_OK = _LazyBool(lambda: (_get_transcript_api() is not None))
 
 from config import is_windows, is_mac, is_linux
 

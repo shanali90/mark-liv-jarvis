@@ -561,3 +561,143 @@ def test_wake_shows_a_normal_window_not_forced_fullscreen():
              if isinstance(c, ast.Call) and isinstance(c.func, ast.Attribute)}
     assert "showFullScreen" not in calls
     assert "show" in calls and "raise_" in calls
+
+
+# ── Startup freeze & latency optimizations ────────────────────────────────────
+
+def test_gmail_lazy_imports():
+    """Heavy googleapiclient imports must not occur at module load time."""
+    src = (ROOT / "actions" / "gmail.py").read_text(encoding="utf-8")
+    tree = ast.parse(src)
+    top_from_imports = [
+        node.module
+        for node in tree.body
+        if isinstance(node, ast.ImportFrom)
+    ]
+    assert not any("googleapiclient" in str(m) or "google_auth" in str(m) or "google.oauth2" in str(m)
+                   for m in top_from_imports)
+
+
+def test_browser_control_lazy_imports():
+    """Heavy playwright imports must not occur at module load time."""
+    src = (ROOT / "actions" / "browser_control.py").read_text(encoding="utf-8")
+    tree = ast.parse(src)
+    top_from_imports = [
+        node.module
+        for node in tree.body
+        if isinstance(node, ast.ImportFrom)
+    ]
+    assert not any("playwright" in str(m) for m in top_from_imports)
+
+
+def test_computer_control_lazy_imports():
+    """PyAutoGUI and Pyperclip imports must be deferred in computer_control.py."""
+    src = (ROOT / "actions" / "computer_control.py").read_text(encoding="utf-8")
+    tree = ast.parse(src)
+    top_imports = []
+    for node in tree.body:
+        if isinstance(node, ast.Import):
+            top_imports.extend(n.name for n in node.names)
+        elif isinstance(node, ast.Try):
+            for sub in node.body:
+                if isinstance(sub, ast.Import):
+                    top_imports.extend(n.name for n in sub.names)
+    assert "pyautogui" not in top_imports
+    assert "pyperclip" not in top_imports
+
+
+def test_computer_settings_lazy_imports():
+    """PyAutoGUI and Pyperclip imports must be deferred in computer_settings.py."""
+    src = (ROOT / "actions" / "computer_settings.py").read_text(encoding="utf-8")
+    tree = ast.parse(src)
+    top_imports = []
+    for node in tree.body:
+        if isinstance(node, ast.Import):
+            top_imports.extend(n.name for n in node.names)
+        elif isinstance(node, ast.Try):
+            for sub in node.body:
+                if isinstance(sub, ast.Import):
+                    top_imports.extend(n.name for n in sub.names)
+    assert "pyautogui" not in top_imports
+    assert "pyperclip" not in top_imports
+
+
+def test_youtube_video_lazy_imports():
+    """requests and youtube_transcript_api imports must be deferred in youtube_video.py."""
+    src = (ROOT / "actions" / "youtube_video.py").read_text(encoding="utf-8")
+    tree = ast.parse(src)
+    top_imports = []
+    for node in tree.body:
+        if isinstance(node, ast.Import):
+            top_imports.extend(n.name for n in node.names)
+        elif isinstance(node, ast.ImportFrom):
+            top_imports.append(node.module)
+        elif isinstance(node, ast.Try):
+            for sub in node.body:
+                if isinstance(sub, ast.Import):
+                    top_imports.extend(n.name for n in sub.names)
+                elif isinstance(sub, ast.ImportFrom):
+                    top_imports.append(sub.module)
+    assert "requests" not in top_imports
+    assert "youtube_transcript_api" not in top_imports
+
+
+def test_audio_devices_prefetch_synchronization(monkeypatch):
+    """list_devices must wait for background prefetch rather than executing a duplicate 2.4s probe."""
+    import time
+    import core.audio_devices as ad
+    ad._cache = None
+    query_calls = 0
+
+    def mock_query():
+        nonlocal query_calls
+        query_calls += 1
+        time.sleep(0.05)
+        return {"input": ["Test Mic"], "output": ["Test Spk"]}
+
+    monkeypatch.setattr(ad, "_query", mock_query)
+    ad.prefetch()
+    res = ad.list_devices("input")
+    assert res == ["Test Mic"]
+    assert query_calls == 1
+
+
+def test_vault_caches_keyring_lookups(monkeypatch):
+    """get_secret must cache keyring lookups in-memory to prevent repeated ~430ms stalls."""
+    from core import vault
+    vault.clear_cache()
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    calls = 0
+
+    def mock_get_password(service, key):
+        nonlocal calls
+        calls += 1
+        return "cached-fixture-key"
+
+    monkeypatch.setitem(
+        sys.modules,
+        "keyring",
+        types.SimpleNamespace(get_password=mock_get_password),
+    )
+
+    k1 = vault.get_secret("gemini_api_key")
+    k2 = vault.get_secret("gemini_api_key")
+    assert k1 == "cached-fixture-key"
+    assert k2 == "cached-fixture-key"
+    assert calls == 1
+
+
+def test_ui_refresh_talk_btns_does_not_eagerly_import_hotkey():
+    """_refresh_talk_btns must not import core.hotkey unless push-to-talk is enabled."""
+    src = (ROOT / "ui.py").read_text(encoding="utf-8")
+    tree = ast.parse(src)
+    fn = next(n for n in ast.walk(tree)
+              if isinstance(n, ast.FunctionDef) and n.name == "_refresh_talk_btns")
+    top_imports = [
+        alias.name
+        for node in fn.body
+        if isinstance(node, ast.ImportFrom) and node.module == "core.hotkey"
+        for alias in node.names
+    ]
+    assert "chord_label" not in top_imports
+

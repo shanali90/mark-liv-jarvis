@@ -4781,7 +4781,6 @@ class MainWindow(QMainWindow):
         """Repaint the push-to-talk row from the saved setting."""
         if not hasattr(self, "_ptt_btn"):
             return
-        from core.hotkey import chord_label
         from memory.config_manager import get_push_to_talk_enabled
         _on = f"""
             QPushButton {{ background: #001a08; color: {C.GREEN};
@@ -4795,7 +4794,12 @@ class MainWindow(QMainWindow):
             QPushButton:hover {{ color: {C.TEXT}; border: 1px solid {C.BORDER_B}; }}"""
 
         ptt = get_push_to_talk_enabled()
-        self._ptt_btn.setText(f"🎚  PUSH-TO-TALK: {chord_label()}" if ptt
+        if ptt:
+            from core.hotkey import chord_label
+            label = chord_label()
+        else:
+            label = ""
+        self._ptt_btn.setText(f"🎚  PUSH-TO-TALK: {label}" if ptt
                               else "🎚  PUSH-TO-TALK: OFF")
         self._ptt_btn.setStyleSheet(_on if ptt else _off)
         self._ptt_btn.setToolTip(
