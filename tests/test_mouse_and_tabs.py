@@ -6,7 +6,7 @@ from types import SimpleNamespace
 import numpy as np
 
 from actions import browser_control, computer_control, open_app
-from core import tab_finder
+from core import dpi, tab_finder
 
 
 class FakeMouse:
@@ -51,6 +51,47 @@ def test_screen_coordinates_scale_from_physical_pixels(monkeypatch):
         1600, 800, {"left": 100, "top": 50, "width": 1920, "height": 1080},
     ) == (1000, 500)
     assert mouse.size() == (1280, 720)
+
+
+def test_dpi_setup_preserves_qt_per_monitor_awareness(monkeypatch):
+    import ctypes
+
+    process_handles = []
+
+    def get_current_process():
+        return 1234
+
+    def get_process_awareness(process, result):
+        process_handles.append(process)
+        result._obj.value = 2
+        return 0
+
+    def set_process_awareness(_value):
+        raise AssertionError("must not override Qt's existing DPI awareness")
+
+    monkeypatch.setattr(dpi.platform, "system", lambda: "Windows")
+    monkeypatch.setattr(dpi, "_attempted", False)
+    monkeypatch.setattr(
+        ctypes,
+        "windll",
+        SimpleNamespace(
+            kernel32=SimpleNamespace(GetCurrentProcess=get_current_process),
+            shcore=SimpleNamespace(
+                GetProcessDpiAwareness=get_process_awareness,
+                SetProcessDpiAwareness=set_process_awareness,
+            ),
+        ),
+        raising=False,
+    )
+
+    dpi.set_process_dpi_awareness()
+
+    assert process_handles == [1234]
+    assert get_current_process.restype is ctypes.c_void_p
+    assert get_process_awareness.argtypes == [
+        ctypes.c_void_p,
+        ctypes.POINTER(ctypes.c_int),
+    ]
 
 
 def test_click_without_coordinates_refuses(monkeypatch):
