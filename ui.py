@@ -22,8 +22,10 @@ if platform.system() == "Windows":
 else:
     _WIN_HIDE: dict = {}
 
+from datetime import datetime
+
 from PyQt6.QtCore import (
-    QLineF, QPointF, QRectF, Qt, QTimer, pyqtSignal,
+    QEvent, QLineF, QPointF, QRectF, Qt, QTimer, pyqtSignal,
 )
 from PyQt6.QtGui import (
     QBrush, QColor, QConicalGradient, QDragEnterEvent, QDropEvent, QFont,
@@ -35,6 +37,11 @@ from PyQt6.QtWidgets import (
     QMainWindow, QMessageBox, QPushButton, QScrollArea, QSizePolicy, QSplitter,
     QStackedWidget, QTextEdit, QVBoxLayout, QWidget,
 )
+
+from ui_theme.plain_log import plain_log_line
+from ui_theme.migration import migrate_saved_accent
+from ui_theme.animations import AuraWidget, VoiceWaveWidget, HeaderAccentLine
+from ui_theme.settings_dialog import SettingsOverlay
 
 try:
     from core.avatar import HoloAvatar
@@ -85,27 +92,27 @@ _OS = platform.system()  # "Windows" | "Darwin" | "Linux"
 
 
 class C:
-    BG        = "#00060a"
-    PANEL     = "#010d14"
-    PANEL2    = "#010f18"
-    BORDER    = "#0d3347"
-    BORDER_B  = "#1a5c7a"
-    BORDER_A  = "#0f4060"
-    PRI       = "#00d4ff"
-    PRI_DIM   = "#007a99"
-    PRI_GHO   = "#001f2e"
-    ACC       = "#ff6b00"
-    ACC2      = "#ffcc00"
-    GREEN     = "#00ff88"
-    GREEN_D   = "#00aa55"
-    RED       = "#ff3355"
-    MUTED_C   = "#ff3366"
-    TEXT      = "#8ffcff"
-    TEXT_DIM  = "#3a8a9a"
-    TEXT_MED  = "#5ab8cc"
-    WHITE     = "#d8f8ff"
-    DARK      = "#000d14"
-    BAR_BG    = "#011520"
+    BG        = "#07040f"
+    PANEL     = "#0d0818"
+    PANEL2    = "#130b24"
+    BORDER    = "#2a1a4a"
+    BORDER_B  = "#3d2a6b"
+    BORDER_A  = "#2a1a4a"
+    PRI       = "#a78bfa"
+    PRI_DIM   = "#6d4fc2"
+    PRI_GHO   = "#1b1236"
+    ACC       = "#f472b6"
+    ACC2      = "#67e8f9"
+    GREEN     = "#3ddc97"
+    GREEN_D   = "#229966"
+    RED       = "#ff5c7a"
+    MUTED_C   = "#ff5c7a"
+    TEXT      = "#ece6ff"
+    TEXT_DIM  = "#8576b3"
+    TEXT_MED  = "#b3a3e6"
+    WHITE     = "#f5f3ff"
+    DARK      = "#090514"
+    BAR_BG    = "#130b24"
 
 
 # Keys tied to the accent colour — status colours (ACC, GREEN, RED…) stay fixed
@@ -1021,6 +1028,16 @@ class MetricBar(QWidget):
 
         p.end()
 
+def _log_raw_activity(text: str) -> None:
+    try:
+        log_path = BASE_DIR / "logs" / "jarvis_activity.log"
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(log_path, "a", encoding="utf-8") as f:
+            f.write(f"[{datetime.now().strftime('%H:%M:%S.%f')[:-3]}] {text}\n")
+    except Exception:
+        pass
+
+
 class LogWidget(QTextEdit):
     _sig = pyqtSignal(str)
 
@@ -1031,14 +1048,14 @@ class LogWidget(QTextEdit):
         # without bound — keeps memory flat and every insert cheap. Oldest
         # lines drop off the top automatically.
         self.document().setMaximumBlockCount(600)
-        self.setFont(QFont("Courier New", 9))
+        self.setFont(QFont("Consolas", 9))
         self.setStyleSheet(f"""
             QTextEdit {{
                 background: {C.PANEL};
                 color: {C.TEXT};
                 border: 1px solid {C.BORDER};
-                border-radius: 4px;
-                padding: 6px;
+                border-radius: 8px;
+                padding: 8px;
                 selection-background-color: {C.PRI_GHO};
             }}
             QScrollBar:vertical {{
@@ -1066,7 +1083,11 @@ class LogWidget(QTextEdit):
         self._sig.emit(text)
 
     def _enqueue(self, text: str):
-        self._queue.append(text)
+        _log_raw_activity(text)
+        plain = plain_log_line(text)
+        if plain is None or not plain.strip():
+            return
+        self._queue.append(plain)
         if not self._typing:
             self._next()
 
@@ -1731,6 +1752,23 @@ class CustomizeOverlay(QWidget):
         """)
         df_btn.clicked.connect(lambda: self._set_color(DEFAULT_UI_COLOR))
         clr_hdr.addWidget(df_btn)
+
+        # Backup of legacy/gold accent so user can pick gold again
+        prev_accent = (_read_full_config().get("previous_ui_color") or "").strip()
+        if prev_accent:
+            prev_btn = QPushButton("RESTORE SAVED")
+            prev_btn.setFixedSize(96, 20)
+            prev_btn.setFont(QFont("Segoe UI", 7, QFont.Weight.Bold))
+            prev_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+            prev_btn.setStyleSheet(f"""
+                QPushButton {{
+                    background: transparent; color: {C.ACC2};
+                    border: 1px solid {C.BORDER}; border-radius: 3px;
+                }}
+                QPushButton:hover {{ color: {C.TEXT}; border-color: {C.BORDER_B}; }}
+            """)
+            prev_btn.clicked.connect(lambda: self._set_color(prev_accent))
+            clr_hdr.addWidget(prev_btn)
         lay.addLayout(clr_hdr)
 
         self._initial_color = (ui_color or DEFAULT_UI_COLOR).strip().lower()
@@ -2981,14 +3019,20 @@ class MainWindow(QMainWindow):
         super().__init__()
         self._face_path = face_path
 
+        # One-time migration of saved legacy/gold accent to new violet default
+        migrate_saved_accent(SETTINGS_FILE)
+
         # Load customization from config
         _cfg = _read_full_config()
         self._assistant_name: str = (_cfg.get("assistant_name") or "JARVIS").strip()
         _display = self._assistant_name.upper()
 
+        self._clock_24h = bool(_cfg.get("clock_24h", False))
+        self._reduce_animations = bool(_cfg.get("reduce_animations", False))
+
         # Apply the saved UI colour BEFORE panels/stylesheets are built
         _ui_color = (_cfg.get("ui_color") or "").strip()
-        if _ui_color and _ui_color.lower() != DEFAULT_UI_COLOR:
+        if _ui_color and _ui_color.lower() != DEFAULT_UI_COLOR.lower():
             apply_ui_accent(_ui_color)
 
         self.setWindowTitle("JARVIS — Personal Assistant")
@@ -3112,14 +3156,19 @@ class MainWindow(QMainWindow):
 
         self._clock_tmr = QTimer(self)
         self._clock_tmr.timeout.connect(self._tick_clock)
-        self._clock_tmr.start(1000)
+        self._clock_tmr.start(60000)  # Update once a minute, not every second
         self._tick_clock()
 
-        # Metric update timer
-        self._metric_tmr = QTimer(self)
-        self._metric_tmr.timeout.connect(self._update_metrics)
-        self._metric_tmr.start(2000)
-        self._update_metrics()
+        # 30 fps shared animation timer for aura, voice wave, and header line
+        self._last_anim_tick = time.monotonic()
+        self._anim_timer = QTimer(self)
+        self._anim_timer.setInterval(33)
+        self._anim_timer.timeout.connect(self._step_animations)
+        if not self._reduce_animations:
+            self._anim_timer.start()
+
+        # Settings overlay (loaded on demand)
+        self._settings_overlay = None
 
         self._log_sig.connect(self._log.append_log)
         self._state_sig.connect(self._apply_state)
@@ -3625,55 +3674,66 @@ class MainWindow(QMainWindow):
             self._position_quick_drawer()
 
     def _update_metrics(self):
-        snap = _metrics.snapshot()
+        pass
 
-        # CPU
-        cpu = snap["cpu"]
-        self._bar_cpu.set_value(cpu, f"{cpu:.0f}%")
+    def _step_animations(self):
+        now = time.monotonic()
+        dt = min(0.1, max(0.001, now - self._last_anim_tick))
+        self._last_anim_tick = now
 
-        # MEM
-        mem = snap["mem"]
-        self._bar_mem.set_value(mem, f"{mem:.0f}%")
+        state = getattr(self.hud, "state", "LISTENING")
+        amp = getattr(self.hud, "_amp_disp", 0.0)
+        reduce = getattr(self, "_reduce_animations", False)
 
-        # NET
-        net = snap["net"]
-        if net < 1.0:
-            net_str = f"{net*1024:.0f}KB/s"
+        if hasattr(self, "_aura_widget"):
+            self._aura_widget.step(dt, state, amp, reduce)
+        if hasattr(self, "_voice_wave"):
+            self._voice_wave.step(dt, state, amp, reduce)
+        if hasattr(self, "_header_line"):
+            self._header_line.step(dt, reduce)
+
+    def _on_settings_changed(self, new_cfg: dict):
+        self._clock_24h = new_cfg.get("clock_24h", False)
+        self._reduce_animations = new_cfg.get("reduce_animations", False)
+        self._tick_clock()
+        if self._reduce_animations:
+            if hasattr(self, "_anim_timer") and self._anim_timer.isActive():
+                self._anim_timer.stop()
         else:
-            net_str = f"{net:.1f}MB/s"
-        net_pct = min(100, net * 10)  # 10 MB/s = %100
-        self._bar_net.set_value(net_pct, net_str)
+            if self.isVisible() and not self.isMinimized():
+                if hasattr(self, "_anim_timer") and not self._anim_timer.isActive():
+                    self._anim_timer.start(33)
+        self._step_animations()
 
-        # GPU
-        gpu = snap["gpu"]
-        if gpu >= 0:
-            self._bar_gpu.set_value(gpu, f"{gpu:.0f}%")
-        else:
-            self._bar_gpu.set_value(0, "N/A")
+    def _open_settings(self):
+        if hasattr(self, "_quick_drawer") and self._quick_drawer.isVisible():
+            self._quick_drawer.hide()
+            self._drawer_btn.setChecked(False)
+        if self._settings_overlay is None:
+            self._settings_overlay = SettingsOverlay(parent=self.centralWidget())
+            self._settings_overlay.settings_changed.connect(self._on_settings_changed)
+        self._centre_overlay(self._settings_overlay)
 
-        # TMP
-        tmp = snap["tmp"]
-        if tmp >= 0:
-            tmp_pct = min(100, (tmp / 100) * 100)
-            self._bar_tmp.set_value(tmp_pct, f"{tmp:.0f}°C")
-        else:
-            self._bar_tmp.set_value(0, "N/A")
+    def showEvent(self, event):
+        super().showEvent(event)
+        if not getattr(self, "_reduce_animations", False) and not self.isMinimized():
+            if hasattr(self, "_anim_timer") and not self._anim_timer.isActive():
+                self._anim_timer.start(33)
 
-        try:
-            boot_t  = psutil.boot_time()
-            elapsed = time.time() - boot_t
-            h = int(elapsed // 3600)
-            m = int((elapsed % 3600) // 60)
-            self._uptime_lbl.setText(f"UP  {h:02d}:{m:02d}")
-        except Exception:
-            self._uptime_lbl.setText("UP  --:--")
+    def hideEvent(self, event):
+        super().hideEvent(event)
+        if hasattr(self, "_anim_timer") and self._anim_timer.isActive():
+            self._anim_timer.stop()
 
-        try:
-            proc_count = len(psutil.pids())
-            self._proc_lbl.setText(f"PROC  {proc_count}")
-        except Exception:
-            self._proc_lbl.setText("PROC  --")
-
+    def changeEvent(self, event):
+        super().changeEvent(event)
+        if event.type() == QEvent.Type.WindowStateChange:
+            if self.isMinimized():
+                if hasattr(self, "_anim_timer") and self._anim_timer.isActive():
+                    self._anim_timer.stop()
+            elif self.isVisible() and not getattr(self, "_reduce_animations", False):
+                if hasattr(self, "_anim_timer") and not self._anim_timer.isActive():
+                    self._anim_timer.start(33)
 
     def _build_header(self) -> QWidget:
         w = QWidget()
@@ -3684,7 +3744,7 @@ class MainWindow(QMainWindow):
 
         def _badge(txt, color=C.TEXT_MED):
             l = QLabel(txt)
-            l.setFont(QFont("Courier New", 8))
+            l.setFont(QFont("Segoe UI", 8, QFont.Weight.Bold))
             l.setStyleSheet(f"color: {color}; background: transparent;")
             return l
 
@@ -3692,13 +3752,13 @@ class MainWindow(QMainWindow):
         lay.addSpacing(8)
         self._drawer_btn = QPushButton("⚙")
         self._drawer_btn.setFixedSize(26, 26)
-        self._drawer_btn.setFont(QFont("Courier New", 11))
+        self._drawer_btn.setFont(QFont("Segoe UI", 11))
         self._drawer_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self._drawer_btn.setToolTip("Settings & Controls")
         self._drawer_btn.setStyleSheet(f"""
             QPushButton {{
                 background: transparent; color: {C.TEXT_DIM};
-                border: 1px solid {C.BORDER}; border-radius: 4px;
+                border: 1px solid {C.BORDER}; border-radius: 6px;
             }}
             QPushButton:hover {{ color: {C.PRI}; border-color: {C.PRI_DIM}; }}
             QPushButton:checked {{ color: {C.PRI}; border-color: {C.PRI}; background: {C.PRI_GHO}; }}
@@ -3708,36 +3768,29 @@ class MainWindow(QMainWindow):
         lay.addWidget(self._drawer_btn)
         
         self._conn_status_lbl = QLabel("⚫ OFFLINE")
-        self._conn_status_lbl.setFont(QFont("Courier New", 8, QFont.Weight.Bold))
+        self._conn_status_lbl.setFont(QFont("Segoe UI", 8, QFont.Weight.Bold))
         self._conn_status_lbl.setStyleSheet(f"color: {C.TEXT_DIM}; background: transparent; padding-left: 8px;")
         lay.addWidget(self._conn_status_lbl)
 
         lay.addStretch()
 
-        mid = QVBoxLayout(); mid.setSpacing(1)
-        _disp = self._assistant_name.upper()
-        self._title_lbl = QLabel(_disp)
-        self._title_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._title_lbl.setFont(QFont("Courier New", 17, QFont.Weight.Bold))
-        self._title_lbl.setStyleSheet(f"color: {C.PRI}; background: transparent;")
-        mid.addWidget(self._title_lbl)
-        _sub_text = "Made by Shaan Ali — Personal JARVIS Assistant"
-        self._sub_lbl = QLabel(_sub_text)
-        self._sub_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._sub_lbl.setFont(QFont("Courier New", 7))
-        self._sub_lbl.setStyleSheet(f"color: {C.PRI_DIM}; background: transparent;")
-        mid.addWidget(self._sub_lbl)
-        lay.addLayout(mid)
+        # Thin sleek animated gradient line in the header centre
+        self._header_line = HeaderAccentLine(w)
+        lay.addWidget(self._header_line)
+
         lay.addStretch()
 
-        right_col = QVBoxLayout(); right_col.setSpacing(2)
-        self._clock_lbl = QLabel("00:00:00")
-        self._clock_lbl.setFont(QFont("Courier New", 14, QFont.Weight.Bold))
-        self._clock_lbl.setStyleSheet(f"color: {C.PRI}; background: transparent;")
+        right_col = QVBoxLayout()
+        right_col.setSpacing(1)
+        right_col.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        self._clock_lbl = QLabel("")
+        self._clock_lbl.setFont(QFont("Segoe UI", 15, QFont.Weight.Bold))
+        self._clock_lbl.setStyleSheet(f"color: {C.TEXT}; background: transparent;")
         self._clock_lbl.setAlignment(Qt.AlignmentFlag.AlignRight)
         right_col.addWidget(self._clock_lbl)
+
         self._date_lbl = QLabel("")
-        self._date_lbl.setFont(QFont("Courier New", 7))
+        self._date_lbl.setFont(QFont("Segoe UI", 8))
         self._date_lbl.setStyleSheet(f"color: {C.TEXT_DIM}; background: transparent;")
         self._date_lbl.setAlignment(Qt.AlignmentFlag.AlignRight)
         right_col.addWidget(self._date_lbl)
@@ -3745,78 +3798,31 @@ class MainWindow(QMainWindow):
         return w
 
     def _tick_clock(self):
-        self._clock_lbl.setText(time.strftime("%H:%M:%S"))
-        self._date_lbl.setText(time.strftime("%a %d %b %Y"))
+        now = datetime.now()
+        if getattr(self, "_clock_24h", False):
+            self._clock_lbl.setText(now.strftime("%H:%M"))
+        else:
+            hr = now.strftime("%I").lstrip("0") or "12"
+            self._clock_lbl.setText(f"{hr}:{now.strftime('%M %p')}")
+        self._date_lbl.setText(f"{now.strftime('%A')}, {now.day} {now.strftime('%B')}")
 
     def _build_left_panel(self) -> QWidget:
         w = QWidget()
         w.setFixedWidth(_LEFT_W)
         w.setStyleSheet(f"background: {C.DARK}; border-right: 1px solid {C.BORDER};")
         lay = QVBoxLayout(w)
-        lay.setContentsMargins(8, 10, 8, 10)
-        lay.setSpacing(6)
+        lay.setContentsMargins(10, 12, 10, 12)
+        lay.setSpacing(8)
 
-        hdr = QLabel("◈ SYS MONITOR")
-        hdr.setFont(QFont("Courier New", 7, QFont.Weight.Bold))
-        hdr.setStyleSheet(f"color: {C.PRI}; background: transparent; "
-                          f"border-bottom: 1px solid {C.BORDER}; padding-bottom: 4px;")
-        lay.addWidget(hdr)
-        lay.addSpacing(2)
-
-        self._bar_cpu = MetricBar("CPU", C.PRI)
-        self._bar_mem = MetricBar("MEM", C.ACC2)
-        self._bar_net = MetricBar("NET", C.GREEN)
-        self._bar_gpu = MetricBar("GPU", C.ACC)
-        self._bar_tmp = MetricBar("TMP", "#ff6688")
-
-        for bar in [self._bar_cpu, self._bar_mem, self._bar_net,
-                    self._bar_gpu, self._bar_tmp]:
-            lay.addWidget(bar)
-
-        lay.addSpacing(4)
-
-        info_panel = QWidget()
-        info_panel.setStyleSheet(
-            f"background: {C.PANEL2}; border: 1px solid {C.BORDER}; border-radius: 4px;"
-        )
-        ip_lay = QVBoxLayout(info_panel)
-        ip_lay.setContentsMargins(6, 5, 6, 5)
-        ip_lay.setSpacing(3)
-
-        self._uptime_lbl = QLabel("UP  --:--")
-        self._uptime_lbl.setFont(QFont("Courier New", 8, QFont.Weight.Bold))
-        self._uptime_lbl.setStyleSheet(f"color: {C.GREEN}; background: transparent; border: none;")
-        ip_lay.addWidget(self._uptime_lbl)
-
-        self._proc_lbl = QLabel("PROC  --")
-        self._proc_lbl.setFont(QFont("Courier New", 8))
-        self._proc_lbl.setStyleSheet(f"color: {C.TEXT_MED}; background: transparent; border: none;")
-        ip_lay.addWidget(self._proc_lbl)
-
-        os_name = {"Windows": "WIN", "Darwin": "macOS", "Linux": "LINUX"}.get(_OS, _OS.upper())
-        os_lbl = QLabel(f"OS  {os_name}")
-        os_lbl.setFont(QFont("Courier New", 8))
-        os_lbl.setStyleSheet(f"color: {C.ACC2}; background: transparent; border: none;")
-        ip_lay.addWidget(os_lbl)
-
-        lay.addWidget(info_panel)
-        lay.addSpacing(4)
+        # Aura animation in upper left panel
+        self._aura_widget = AuraWidget(w)
+        lay.addWidget(self._aura_widget)
 
         lay.addStretch()
 
-        for txt, col in [
-            ("AI CORE\nACTIVE",  C.GREEN),
-            ("SEC\nCLEARED",     C.PRI),
-            ("PROTOCOL\n" + APP_PROTOCOL,   C.TEXT_DIM),
-        ]:
-            lbl = QLabel(txt)
-            lbl.setFont(QFont("Courier New", 7, QFont.Weight.Bold))
-            lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            lbl.setStyleSheet(
-                f"color: {col}; background: {C.PANEL2};"
-                f"border: 1px solid {C.BORDER_A}; border-radius: 3px; padding: 4px;"
-            )
-            lay.addWidget(lbl)
+        # Voice wave animation in lower left panel
+        self._voice_wave = VoiceWaveWidget(w)
+        lay.addWidget(self._voice_wave)
 
         return w
     def _build_right_panel(self) -> QWidget:
@@ -3861,18 +3867,18 @@ class MainWindow(QMainWindow):
 
         self._interrupt_btn = QPushButton("✋  INTERRUPT  [ESC]")
         self._interrupt_btn.setFixedHeight(34)
-        self._interrupt_btn.setFont(QFont("Courier New", 8, QFont.Weight.Bold))
+        self._interrupt_btn.setFont(QFont("Segoe UI", 9, QFont.Weight.Bold))
         self._interrupt_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self._interrupt_btn.setStyleSheet(f"""
             QPushButton {{
-                background: #140008; color: {C.MUTED_C};
-                border: 1px solid {C.MUTED_C}; border-radius: 3px;
+                background: rgba(255, 92, 122, 0.08); color: {C.RED};
+                border: 1px solid {C.RED}; border-radius: 8px;
             }}
             QPushButton:hover {{
-                background: #200010; border: 1px solid #ff6688;
+                background: rgba(255, 92, 122, 0.18); border: 1px solid #ff7a94;
             }}
             QPushButton:pressed {{
-                background: #300018;
+                background: rgba(255, 92, 122, 0.28);
             }}
         """)
         self._interrupt_btn.clicked.connect(self._do_interrupt)
@@ -3880,7 +3886,7 @@ class MainWindow(QMainWindow):
 
         self._mute_btn = QPushButton("🎙  MICROPHONE ACTIVE")
         self._mute_btn.setFixedHeight(30)
-        self._mute_btn.setFont(QFont("Courier New", 8, QFont.Weight.Bold))
+        self._mute_btn.setFont(QFont("Segoe UI", 9, QFont.Weight.Bold))
         self._mute_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self._mute_btn.clicked.connect(self._toggle_mute)
         self._style_mute_btn()
@@ -3924,10 +3930,18 @@ class MainWindow(QMainWindow):
         lay.setSpacing(5)
 
         hdr = QLabel("◈ CONTROLS")
-        hdr.setFont(QFont("Courier New", 7, QFont.Weight.Bold))
+        hdr.setFont(QFont("Segoe UI", 8, QFont.Weight.Bold))
         hdr.setStyleSheet(f"color: {C.PRI_DIM}; background: transparent; "
                           f"border-bottom: 1px solid {C.BORDER}; padding-bottom: 4px;")
         lay.addWidget(hdr)
+
+        settings_btn = QPushButton("⚙  SETTINGS & ABOUT")
+        settings_btn.setFixedHeight(28)
+        settings_btn.setFont(QFont("Segoe UI", 8, QFont.Weight.Bold))
+        settings_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        settings_btn.setStyleSheet(_BTN_STYLE_PRI)
+        settings_btn.clicked.connect(self._open_settings)
+        lay.addWidget(settings_btn)
 
         remote_btn = QPushButton("◉  REMOTE CONTROL")
         remote_btn.setFixedHeight(30)
@@ -4565,13 +4579,12 @@ class MainWindow(QMainWindow):
         lay = QHBoxLayout(w); lay.setContentsMargins(14, 0, 14, 0)
 
         def _fl(txt, color=C.TEXT_MED):
-            l = QLabel(txt); l.setFont(QFont("Courier New", 7))
+            l = QLabel(txt); l.setFont(QFont("Segoe UI", 8))
             l.setStyleSheet(f"color: {color}; background: transparent;")
             return l
 
         lay.addWidget(_fl("[F4] Mute  ·  [F11] Fullscreen"))
         lay.addStretch()
-        lay.addWidget(_fl("Made by Shaan Ali — Personal JARVIS Assistant", C.PRI_DIM))
         return w
 
     def _on_file_selected(self, path: str):
@@ -5017,8 +5030,10 @@ class MainWindow(QMainWindow):
         self._assistant_name = name.strip() or "JARVIS"
         display = self._assistant_name.upper()
         self.setWindowTitle("JARVIS — Personal Assistant")
-        self._title_lbl.setText(display)
-        self._sub_lbl.setText("Made by Shaan Ali — Personal JARVIS Assistant")
+        if hasattr(self, "_title_lbl"):
+            self._title_lbl.setText(display)
+        if hasattr(self, "_sub_lbl"):
+            self._sub_lbl.setText("Made by Shaan Ali — Personal JARVIS Assistant")
         self._log._ai_name_lc = self._assistant_name.lower()
         self.hud._assistant_name = display
 
@@ -5194,18 +5209,19 @@ class MainWindow(QMainWindow):
             self._mute_btn.setText("🔇  MICROPHONE MUTED")
             self._mute_btn.setStyleSheet(f"""
                 QPushButton {{
-                    background: #140006; color: {C.MUTED_C};
-                    border: 1px solid {C.MUTED_C}; border-radius: 3px;
+                    background: rgba(255, 92, 122, 0.12); color: {C.MUTED_C};
+                    border: 1px solid {C.MUTED_C}; border-radius: 8px;
                 }}
+                QPushButton:hover {{ background: rgba(255, 92, 122, 0.20); }}
             """)
         else:
             self._mute_btn.setText("🎙  MICROPHONE ACTIVE")
             self._mute_btn.setStyleSheet(f"""
                 QPushButton {{
-                    background: #00140a; color: {C.GREEN};
-                    border: 1px solid {C.GREEN}; border-radius: 3px;
+                    background: rgba(167, 139, 250, 0.16); color: {C.PRI};
+                    border: 1px solid {C.PRI}; border-radius: 8px;
                 }}
-                QPushButton:hover {{ background: #001f10; }}
+                QPushButton:hover {{ background: rgba(167, 139, 250, 0.26); border-color: {C.TEXT}; }}
             """)
 
     def _send(self):
@@ -5219,6 +5235,9 @@ class MainWindow(QMainWindow):
     def _apply_state(self, state: str):
         self.hud.state    = state
         self.hud.speaking = (state == "SPEAKING")
+        if state == "SLEEPING" and not self.isVisible():
+            if hasattr(self, "_anim_timer") and self._anim_timer.isActive():
+                self._anim_timer.stop()
 
     def _apply_connection_status(self, status: str, color_hex: str):
         self._conn_status_lbl.setText(status)
