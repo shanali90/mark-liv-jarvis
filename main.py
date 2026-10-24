@@ -741,17 +741,9 @@ class JarvisLive(AudioMixin, ToolMixin):
                 self.sleep(reason="no speech for 2 minutes")
 
     async def _run_keep_warm(self) -> None:
-        """Section 19: Keep session warm during sleep to prevent 3-5s wake delay."""
-        while True:
-            await asyncio.sleep(120)  # Ping every 2 mins
-            if self.session and self.state == JarvisState.SLEEPING:
-                try:
-                    await self.session.send_client_content(
-                        turns={"role": "user", "parts": [{"text": "[SYSTEM: STAY ALIVE — Do not respond to this.]"}]},
-                        turn_complete=True,
-                    )
-                except Exception:
-                    pass
+        """Disabled: WebSocket keepalive (ping_interval=25s) and resumption handle
+        maintain the connection without sending synthetic user turns to the model."""
+        return
 
     async def _run_network_monitor(self) -> None:
         """Section 11: Periodic lightweight connectivity check every 30 seconds."""
@@ -1599,10 +1591,12 @@ class JarvisLive(AudioMixin, ToolMixin):
 
         from core.reconnect import (
             ReconnectBackoff, ErrorLogLimiter, classify_disconnect,
-            DisconnectKind, unwrap_exception, safe_error_summary, wait_for_api_dns
+            DisconnectKind, unwrap_exception, safe_error_summary, wait_for_api_dns,
+            format_disconnect_reason, PlannedReconnectLimiter
         )
         backoff = ReconnectBackoff()
         log_limiter = ErrorLogLimiter(interval=60.0)
+        planned_limiter = PlannedReconnectLimiter(max_count=3, window_seconds=20.0)
 
         while True:
             session_connected_time = None
@@ -1698,7 +1692,6 @@ class JarvisLive(AudioMixin, ToolMixin):
                     tg.create_task(supervise("sleep_watch", self._run_sleep_watch))
                     # Section 11 disabled for Phase 2:
                     # tg.create_task(supervise("network_monitor", self._run_network_monitor))
-                    tg.create_task(supervise("keep_warm", self._run_keep_warm))
                     if self._dashboard:
                         tg.create_task(self._relay_phone_audio())
 
@@ -1742,9 +1735,11 @@ class JarvisLive(AudioMixin, ToolMixin):
                     continue
 
                 if kind == DisconnectKind.PLANNED:
-                    print("[JARVIS] Planned server GoAway/session end — reconnecting immediately.")
-                    self.session = None
-                    continue
+                    if not planned_limiter.record_and_should_backoff():
+                        print("[JARVIS] Planned server GoAway/session end — reconnecting immediately.")
+                        self.session = None
+                        continue
+                    print("[JARVIS] Planned reconnect rate-limit exceeded (>3 in 20s) — applying backoff.")
 
                 err_str = str(unwrapped)
                 if self._tuned_live and (
@@ -1778,15 +1773,16 @@ class JarvisLive(AudioMixin, ToolMixin):
                         traceback.print_exception(type(unwrapped), unwrapped, unwrapped.__traceback__)
 
                 delay = backoff.next_delay()
+                reason_str = format_disconnect_reason(unwrapped, max_message_len=150)
                 if kind == DisconnectKind.NETWORK:
                     if should_log:
                         self.ui.write_log(
-                            f"NET: Connection failed ({type(unwrapped).__name__}) — retrying in {delay}s."
+                            f"NET: Connection failed ({reason_str}) — retrying in {delay}s."
                         )
                 else:
                     if should_log:
                         self.ui.write_log(
-                            f"ERR: Session error ({type(unwrapped).__name__}) — retrying in {delay}s."
+                            f"ERR: Session error ({reason_str}) — retrying in {delay}s."
                         )
             finally:
                 if session_connected_time is not None:
