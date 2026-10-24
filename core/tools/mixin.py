@@ -10,7 +10,6 @@ from core import undo as undo_stack
 
 
 
-from core.safety.trust import get_trust_level, LEVEL_ASK
 from core.audit import log_action
 from selfheal.detect import safe_execute, _record_incident, _record_success
 from core import confirm as confirm_gate
@@ -25,9 +24,26 @@ class ToolMixin:
         self.ui.set_state("THINKING")
 
         action = args.get("action")
-        trust_level = get_trust_level(name, action, args=args)
+        args.pop("confirmed", None)
+        from core.autonomy import get_autonomy_tier, announce_and_wait, TIER_ANNOUNCE_THEN_DO, TIER_ALWAYS_ASK
+        autonomy_tier = get_autonomy_tier(name, action, args=args)
 
-        if trust_level == LEVEL_ASK:
+        if autonomy_tier == TIER_ANNOUNCE_THEN_DO:
+            loop = asyncio.get_event_loop()
+            spk = getattr(self, "speak", None)
+            abort_chk = lambda: getattr(self, "_abort_requested", False)
+            proceed = await loop.run_in_executor(
+                None, lambda: announce_and_wait(name, action, args, speak_fn=spk, voice_abort_check=abort_chk)
+            )
+            if not proceed:
+                self.set_processing(False)
+                if not self.ui.muted:
+                    self.ui.set_state("LISTENING")
+                return types.FunctionResponse(
+                    id=fc.id, name=name, response={"result": "NOT DONE: action cancelled by user"}
+                )
+            args["confirmed"] = True
+        elif autonomy_tier == TIER_ALWAYS_ASK:
             if name == "shutdown_jarvis":
                 msg = self._request_shutdown_confirmation()
                 self.set_processing(False)

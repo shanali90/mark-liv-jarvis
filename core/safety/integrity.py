@@ -10,7 +10,7 @@ SAFETY_FILE_HASHES = {
     "main.py": "e8b983e904cc9fc7e37e75bf62a44ef15a5d86eab329cf51fbbd3fc457f1d51b",
     "core/confirm.py": "278bb754b6e073d598829492ece81743eafbcb4a5f41721aa703b0c6fe746f1d",
     "core/safety/trust.py": "4ce17935bbc18224e06f038db82669986a153aa96d63fd47d4756be8e6addfb3",
-    "core/tools/mixin.py": "d0c9475545bed57f380fd6f78d9c2b9922e3207d8ee279a1a5705b6e0b9c9594",
+    "core/tools/mixin.py": "4c137a102fad474734fc3d4bda5b7126e5cc234d21e0ee97b9e7e832a5c4f3ba",
     "scripts/hooks/pre-commit": "40953d61ed5c57d3a49eae0dc8b9258a1995e87f5a2e0bb3bd82764e06eb01db",
 }
 
