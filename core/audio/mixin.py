@@ -65,6 +65,16 @@ class AudioMixin:
             return self._wake_detector.start()
         return True
 
+    def _is_asleep(self) -> bool:
+        """True while JARVIS is waiting for the wake word.
+
+        While asleep nothing the model says may be played and nothing it asks
+        for may be run: the only thing that reaches it is housekeeping text
+        (the keep-warm ping), and answering that aloud, or opening Google
+        because of it, is exactly the "random topics / random URLs" bug.
+        """
+        return bool(getattr(self, "_wake_enabled", False)) and not getattr(self, "_awake", True)
+
     def _enqueue_mic_audio(self, msg: dict) -> None:
         if self.out_queue is None:
             return
@@ -298,8 +308,8 @@ class AudioMixin:
                             self._resume_handle = _sru.new_handle
 
                     if response.data:
-                        if self._interrupted:
-                            pass  # discard: interrupted
+                        if self._interrupted or self._is_asleep():
+                            pass  # discard: interrupted, or asleep (nothing may speak)
                         else:
                             if self._turn_done_event and self._turn_done_event.is_set():
                                 self._turn_done_event.clear()
@@ -478,6 +488,13 @@ class AudioMixin:
                     if response.tool_call:
                         fn_responses = []
                         for fc in response.tool_call.function_calls:
+                            if self._is_asleep():
+                                print(f"[Audit] Refused tool call while asleep: {fc.name}")
+                                fn_responses.append(types.FunctionResponse(
+                                    id=fc.id, name=fc.name,
+                                    response={"result": "Not run: JARVIS is asleep and nobody asked for this."},
+                                ))
+                                continue
                             from core.activity import record_tool_call, get_last_user_speech_info
                             record_tool_call()
                             last_speech_time, last_speech_txt = get_last_user_speech_info()
@@ -492,7 +509,6 @@ class AudioMixin:
                                 self.ui.write_log(audit_line)
                             try:
                                 import os
-                                from datetime import datetime
                                 os.makedirs("logs", exist_ok=True)
                                 with open("logs/jarvis_activity.log", "a", encoding="utf-8") as f:
                                     f.write(f"[{datetime.now().strftime('%H:%M:%S.%f')[:-3]}] {audit_line}\n")

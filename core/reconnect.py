@@ -59,7 +59,11 @@ def _error_codes(error: BaseException) -> set[int]:
             codes.add(int(value))
         except (TypeError, ValueError):
             pass
-    codes.update(int(value) for value in re.findall(r"\b(1000|1001|1006|1007|1011)\b", str(error)))
+    # Only numbers that are actually a websocket close code ("received 1000",
+    # "sent 1011", "code = 1006") - a bare "1000" in a quota message or a byte
+    # count must not be taken for a planned close (that retried instantly, forever).
+    codes.update(int(value) for value in re.findall(
+        r"(?:received|sent|code\s*[=:]?)\s*(1000|1001|1006|1007|1011)\b", str(error), re.I))
     return codes
 
 

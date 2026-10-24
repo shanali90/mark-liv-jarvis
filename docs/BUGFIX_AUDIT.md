@@ -64,3 +64,7 @@ Tests: 5 in `tests/test_audit_fixes.py`, each checked by deliberately breaking t
 The work machine for this pass is Linux without PyQt6, sounddevice, google-genai, keyring or pytest, and has no package access. The new tests were run with a small shim against stubbed modules (all pass; all fail on the old code). The full `verify.ps1` run, including CONNECTED, must be done on your Windows PC.
 
 - Waking JARVIS forced fullscreen (no minimise/maximise buttons). It now shows a normal window; F11 still toggles fullscreen. Test: `test_wake_shows_a_normal_window_not_forced_fullscreen`.
+
+- `_receive_audio` crashed with UnboundLocalError (local `from datetime import datetime` after an earlier use) -> session dropped on every spoken sentence. Removed; test `test_no_shadowed_imports` scans the whole repo.
+- While asleep, model audio is dropped and tool calls are refused (keep-warm ping made the model talk and open Google). Tests: `test_sleep_gate`.
+- Close-code regex matched any bare 1000 in an error message (instant retry loop). Now needs "received/sent/code". Test: `test_reconnect_codes`.
