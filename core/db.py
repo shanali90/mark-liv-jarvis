@@ -128,6 +128,24 @@ def get_all_memory() -> dict:
         mem[cat][r["key"]] = {"value": r["value"], "updated": r["updated_at"]}
     return mem
 
+def _cosine(a, b) -> float | None:
+    """Compute cosine similarity between two vectors.
+
+    Returns None when vector sizes differ or when either norm is zero.
+    """
+    if a is None or b is None:
+        return None
+    a_arr = np.asarray(a, dtype=np.float32)
+    b_arr = np.asarray(b, dtype=np.float32)
+    if a_arr.shape != b_arr.shape:
+        return None
+    norm_a = float(np.linalg.norm(a_arr))
+    norm_b = float(np.linalg.norm(b_arr))
+    if norm_a <= 0.0 or norm_b <= 0.0:
+        return None
+    return float(np.dot(a_arr, b_arr) / (norm_a * norm_b))
+
+
 def search_memory(query: str, limit: int = 8) -> list[dict]:
     # Hybrid search: FTS5 + Cosine similarity (if available)
     conn = get_connection()
@@ -162,16 +180,12 @@ def search_memory(query: str, limit: int = 8) -> list[dict]:
         for r in c.fetchall():
             emb_bytes = r["embedding"]
             db_vec = np.frombuffer(emb_bytes, dtype=np.float32)
-            # cosine similarity
-            norm_q = np.linalg.norm(q_vec)
-            norm_db = np.linalg.norm(db_vec)
-            if norm_q > 0 and norm_db > 0:
-                sim = np.dot(q_vec, db_vec) / (norm_q * norm_db)
-                if sim > 0.5: # threshold
-                    if r["id"] in results:
-                        results[r["id"]]["score"] += float(sim)
-                    else:
-                        results[r["id"]] = {"score": float(sim), "row": r}
+            sim = _cosine(q_vec, db_vec)
+            if sim is not None and sim > 0.5: # threshold
+                if r["id"] in results:
+                    results[r["id"]]["score"] += float(sim)
+                else:
+                    results[r["id"]] = {"score": float(sim), "row": r}
                         
     conn.close()
     

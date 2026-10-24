@@ -70,6 +70,9 @@ import sys
 import time
 import threading
 from pathlib import Path
+from core.net_tuning import apply_net_tuning
+
+apply_net_tuning()
 
 if getattr(sys, "frozen", False):
     _BASE = Path(sys.executable).parent
@@ -111,13 +114,49 @@ SEARCH = "search"  # grounded search — REST only, see below
 #     on REST — see SEARCH.
 LIVE = "live"
 
+_dead_models: set[str] = set()
+_dead_lock = threading.Lock()
+_discovered_models: list[str] | None = None
+_discovered_lock = threading.Lock()
+
+
+def get_available_models(refresh: bool = False) -> list[str]:
+    """Query client.models.list() cached for the session, keeping only generateContent models."""
+    global _discovered_models
+    with _discovered_lock:
+        if _discovered_models is not None and not refresh:
+            return _discovered_models
+        try:
+            cl = client(timeout_ms=10_000)
+            raw = list(cl.models.list())
+            available = []
+            for m in raw:
+                name = getattr(m, "name", "")
+                if name.startswith("models/"):
+                    name = name[len("models/"):]
+                actions = (
+                    getattr(m, "supported_actions", None)
+                    or getattr(m, "supported_generation_methods", None)
+                    or []
+                )
+                if "generateContent" in actions or "generate_content" in actions:
+                    available.append(name)
+            _discovered_models = available
+        except Exception:
+            _discovered_models = [
+                "gemini-3.5-flash",
+                "gemini-3.5-flash-lite",
+                "gemini-3.1-flash-lite",
+                "gemini-flash-lite-latest",
+                "gemini-3-flash-preview",
+            ]
+        return _discovered_models
+
+
 _LADDERS = {
-    FAST: (LIVE, "gemini-2.5-flash-lite", "gemini-2.5-flash"),
-    SMART: (LIVE, "gemini-2.5-flash", "gemini-2.5-flash-lite"),
-    # Grounded search needs response.candidates[...].grounding_metadata, which a
-    # Live turn does not produce. REST only, and it says so rather than silently
-    # returning an answer with no sources behind it.
-    SEARCH: ("gemini-2.5-flash", "gemini-flash-latest", "gemini-2.5-flash-lite"),
+    FAST: (LIVE, "gemini-3.5-flash-lite", "gemini-3.1-flash-lite", "gemini-flash-lite-latest", "gemini-3.5-flash"),
+    SMART: (LIVE, "gemini-3.5-flash", "gemini-3.5-flash-lite", "gemini-3.1-flash-lite"),
+    SEARCH: ("gemini-3.5-flash", "gemini-3.5-flash-lite", "gemini-3.1-flash-lite"),
 }
 
 # The Live model to use for one-shot calls. main.py owns the real one; this is
@@ -374,9 +413,19 @@ def call(contents, tier: str = FAST, config=None,
     # is tried first, with the reasoning ladder behind it. So a user's choice is
     # honoured, and a user's choice that is having an outage still degrades to
     # something that answers instead of to nothing.
-    ladder = _LADDERS.get(tier)
-    if ladder is None:
-        ladder = (tier,) + tuple(m for m in _LADDERS[SMART] if m != tier)
+    base_ladder = _LADDERS.get(tier)
+    if base_ladder is None:
+        base_ladder = (tier,) + tuple(m for m in _LADDERS[SMART] if m != tier)
+
+    try:
+        available = get_available_models()
+        if available:
+            rebuilt = [m for m in base_ladder if m == LIVE or m in available]
+            ladder = tuple(rebuilt) if rebuilt else base_ladder
+        else:
+            ladder = base_ladder
+    except Exception:
+        ladder = base_ladder
 
     resolved_key = key or api_key()
     if not resolved_key:
@@ -384,7 +433,12 @@ def call(contents, tier: str = FAST, config=None,
         return None
 
     cl = None
-    tried = [m for m in ladder if not _cooling(m)] or list(ladder)
+    with _dead_lock:
+        dead_copy = set(_dead_models)
+    tried = [m for m in ladder if m not in dead_copy and not _cooling(m)]
+    if not tried:
+        tried = [m for m in ladder if m not in dead_copy] or list(ladder)
+
     for model in tried:
         try:
             if model == LIVE:
@@ -400,7 +454,11 @@ def call(contents, tier: str = FAST, config=None,
             return cl.models.generate_content(**kwargs)
         except Exception as e:
             msg = str(e)
-            if "429" in msg or "RESOURCE_EXHAUSTED" in msg:
+            if "404" in msg or "NOT_FOUND" in msg or "no longer available" in msg:
+                with _dead_lock:
+                    _dead_models.add(model)
+                print(f"[Gemini] {model}: no longer available — removed from session ladder")
+            elif "429" in msg or "RESOURCE_EXHAUSTED" in msg:
                 _cool(model)
                 print(f"[Gemini] {model}: out of quota — skipping it for "
                       f"{_COOLDOWN_SECONDS // 60} minutes")

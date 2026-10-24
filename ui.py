@@ -13,6 +13,10 @@ from pathlib import Path
 
 import psutil
 
+_qt_rules = os.environ.get("QT_LOGGING_RULES", "")
+if "qt.text.font.db=false" not in _qt_rules:
+    os.environ["QT_LOGGING_RULES"] = (_qt_rules + ";qt.text.font.db=false").strip(";")
+
 if platform.system() == "Windows":
     _WIN_HIDE: dict = {"creationflags": subprocess.CREATE_NO_WINDOW}
 else:
@@ -218,11 +222,18 @@ def _nvml_gpu_windows() -> float:
                     continue
 
         if _nvml_lib is None:
-            import pynvml  # type: ignore
-            pynvml.nvmlInit()
-            h = pynvml.nvmlDeviceGetHandleByIndex(0)
-            _nvml_ok = True
-            return float(pynvml.nvmlDeviceGetUtilizationRates(h).gpu)
+            import warnings
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", category=FutureWarning)
+                try:
+                    import pynvml  # type: ignore
+                    pynvml.nvmlInit()
+                    h = pynvml.nvmlDeviceGetHandleByIndex(0)
+                    _nvml_ok = True
+                    return float(pynvml.nvmlDeviceGetUtilizationRates(h).gpu)
+                except Exception:
+                    _nvml_ok = False
+                    return -1.0
 
         dev = ctypes.c_void_p()
         _nvml_lib.nvmlDeviceGetHandleByIndex_v2(0, ctypes.byref(dev))
@@ -308,11 +319,14 @@ class _SysMetrics:
         if self._pynvml_ok is not False:
             try:
                 if self._pynvml_h is None:
-                    import pynvml  # type: ignore
-                    pynvml.nvmlInit()
-                    self._pynvml    = pynvml
-                    self._pynvml_h  = pynvml.nvmlDeviceGetHandleByIndex(0)
-                    self._pynvml_ok = True
+                    import warnings
+                    with warnings.catch_warnings():
+                        warnings.simplefilter("ignore", category=FutureWarning)
+                        import pynvml  # type: ignore
+                        pynvml.nvmlInit()
+                        self._pynvml    = pynvml
+                        self._pynvml_h  = pynvml.nvmlDeviceGetHandleByIndex(0)
+                        self._pynvml_ok = True
                 return float(self._pynvml.nvmlDeviceGetUtilizationRates(self._pynvml_h).gpu)
             except Exception:
                 self._pynvml_ok = False

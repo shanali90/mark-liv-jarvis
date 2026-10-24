@@ -6,17 +6,25 @@ import time
 
 
 USER_SPEECH_COOLDOWN_SECS = 600
-TOOL_CALL_COOLDOWN_SECS = 180
+TOOL_CALL_COOLDOWN_SECS = 600
 
 _lock = threading.Lock()
 _last_user_speech: float | None = None
+_last_user_transcript: str = ""
 _last_tool_call: float | None = None
 
 
-def record_user_speech() -> None:
-    global _last_user_speech
+def record_user_speech(transcript: str = "") -> None:
+    global _last_user_speech, _last_user_transcript
     with _lock:
         _last_user_speech = time.monotonic()
+        if transcript:
+            _last_user_transcript = transcript
+
+
+def get_last_user_speech_info() -> tuple[float | None, str]:
+    with _lock:
+        return _last_user_speech, _last_user_transcript
 
 
 def record_tool_call() -> None:

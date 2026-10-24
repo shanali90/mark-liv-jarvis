@@ -19,12 +19,31 @@ except ImportError:
     _PYPERCLIP = False
 
 # ── Global Action Kill-Switch ────────────────────────────────────────────────
+# ── Global Action Kill-Switch ────────────────────────────────────────
 _ABORT_EVENT = threading.Event()
+_ACTION_PENDING = False
+_ACTION_LOCK = threading.Lock()
 
-def abort_current_action() -> None:
-    """Set the kill-switch flag to abort any running automation immediately."""
+def set_action_pending(pending: bool) -> None:
+    global _ACTION_PENDING
+    with _ACTION_LOCK:
+        _ACTION_PENDING = bool(pending)
+
+def is_action_pending() -> bool:
+    with _ACTION_LOCK:
+        return _ACTION_PENDING
+
+def abort_current_action() -> bool:
+    """Set the kill-switch flag to abort any running automation immediately.
+    
+    Only fires if an action is actually pending. Returns True if aborted.
+    """
+    with _ACTION_LOCK:
+        if not _ACTION_PENDING:
+            return False
     _ABORT_EVENT.set()
     print("[SendMessage] 🛑 Kill-switch activated! Aborting pending action.")
+    return True
 
 def reset_action_abort() -> None:
     """Reset the kill-switch flag before starting a new action."""
@@ -327,6 +346,7 @@ def send_message(
 
     # Mandatory user confirmation check
     if not confirmed:
+        set_action_pending(True)
         return (
             f"[CONFIRMATION_PENDING] Sending message to {receiver} via {platform}: "
             f"\"{message_text}\". Say yes to confirm or cancel to abort."

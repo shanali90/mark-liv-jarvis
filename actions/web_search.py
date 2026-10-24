@@ -249,9 +249,14 @@ def _search(query: str) -> str:
         return res
     except Exception as e:
         _log_gemini_failure("Gemini search", e)
-        results = _ddg_search(query)
-        res = _format_ddg(query, results)
-        return res
+        try:
+            results = _ddg_search(query)
+            res = _format_ddg(query, results)
+            if not res or res.startswith("No search results found"):
+                return "I couldn't find any results for that search, sir."
+            return res
+        except Exception:
+            return "I couldn't reach the search service right now, sir."
 
 
 def _news(query: str) -> str:

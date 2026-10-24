@@ -81,15 +81,17 @@ class EmbeddingAdapter(ABC):
         pass
 
 class GeminiEmbeddingAdapter(EmbeddingAdapter):
-    def __init__(self, model_name: str = "text-embedding-004"):
+    def __init__(self, model_name: str = "gemini-embedding-001"):
         self.model_name = model_name
         
     def embed(self, text: str) -> list[float]:
         from core.gemini import client as gemini_client
+        from google.genai import types as gtypes
         cl = gemini_client()
         result = cl.models.embed_content(
             model=self.model_name,
-            contents=text
+            contents=text,
+            config=gtypes.EmbedContentConfig(output_dimensionality=768),
         )
         # return the list of floats
         return result.embeddings[0].values
@@ -120,7 +122,7 @@ class OpenAIEmbeddingAdapter(EmbeddingAdapter):
         resp.raise_for_status()
         return resp.json()["data"][0]["embedding"]
 
-def get_embedding_model(provider: str = "gemini", model_name: str = "text-embedding-004") -> EmbeddingAdapter:
+def get_embedding_model(provider: str = "gemini", model_name: str = "gemini-embedding-001") -> EmbeddingAdapter:
     if provider == "gemini":
         return GeminiEmbeddingAdapter(model_name)
     elif provider == "openai":

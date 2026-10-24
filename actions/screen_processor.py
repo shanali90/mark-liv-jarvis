@@ -81,6 +81,16 @@ def _get_os() -> str:
 _IMG_MAX_W = 1280
 _IMG_MAX_H = 720
 _JPEG_Q    = 82
+_WEAK_CONNECTION = False
+
+
+def set_weak_connection(weak: bool) -> None:
+    global _WEAK_CONNECTION
+    _WEAK_CONNECTION = bool(weak)
+
+
+def is_weak_connection() -> bool:
+    return _WEAK_CONNECTION
 
 
 def _compress(img_bytes: bytes, source_format: str = "PNG") -> tuple[bytes, str]:
@@ -89,9 +99,11 @@ def _compress(img_bytes: bytes, source_format: str = "PNG") -> tuple[bytes, str]
 
     try:
         img = PIL.Image.open(io.BytesIO(img_bytes)).convert("RGB")
-        img.thumbnail((_IMG_MAX_W, _IMG_MAX_H), PIL.Image.BILINEAR)
+        max_w, max_h = (640, 360) if _WEAK_CONNECTION else (_IMG_MAX_W, _IMG_MAX_H)
+        quality = 60 if _WEAK_CONNECTION else _JPEG_Q
+        img.thumbnail((max_w, max_h), PIL.Image.BILINEAR)
         buf = io.BytesIO()
-        img.save(buf, format="JPEG", quality=_JPEG_Q, optimize=False)
+        img.save(buf, format="JPEG", quality=quality, optimize=False)
         return buf.getvalue(), "image/jpeg"
     except Exception as e:
         print(f"[Vision] ⚠️  Image compress failed: {e}")

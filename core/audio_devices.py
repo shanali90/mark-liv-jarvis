@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import threading
 import time
+_warned_no_audio = False
 
 # The label shown for "let the OS decide", and the value stored in config for
 # it. Empty string, so an untouched install and a deliberately-default install
@@ -148,9 +149,12 @@ def _transport_works(idx: int, kind: str, api_key) -> bool:
             st.stop(); st.close()
             ok = elapsed > secs * 0.5
             if not ok:
-                print(f"[Audio] output: host API reports success but moves no "
-                      f"audio ({elapsed*1000:.0f} ms for {secs*1000:.0f} ms) "
-                      f"— skipping it")
+                global _warned_no_audio
+                if not _warned_no_audio:
+                    _warned_no_audio = True
+                    print(f"[Audio] output: host API reports success but moves no "
+                          f"audio ({elapsed*1000:.0f} ms for {secs*1000:.0f} ms) "
+                          f"— skipping it")
         else:
             # main.py reads through a callback — count what arrives.
             frames = [0]

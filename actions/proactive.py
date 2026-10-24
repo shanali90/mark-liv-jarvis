@@ -36,8 +36,11 @@ class ProactiveEngine:
 
     def should_trigger(self, last_user_speech: float) -> bool:
         from memory.config_manager import get_proactive_enabled
+        from core.activity import background_notice_allowed
 
         if not get_proactive_enabled():
+            return False
+        if not background_notice_allowed():
             return False
         now = time.monotonic()
         return (

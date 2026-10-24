@@ -33,7 +33,8 @@ def test_wake_threshold():
 
     print("Feeding random noise...")
     # Feed 3 seconds of random noise (16kHz)
-    noise = np.random.normal(0, 1000, 16000 * 3).astype(np.int16)
+    np.random.seed(42)
+    noise = np.random.normal(0, 500, 16000 * 3).astype(np.int16)
 
     # Feed in chunks
     for i in range(0, len(noise), 1280):
@@ -47,6 +48,7 @@ def test_wake_threshold():
         # don't exit, let's see what the genuine phrase scores
         detected = False
 
+    detector._paused = False
     print("Moving on to genuine phrase...")
 
     # Now feed the actual "Hey Jarvis" audio

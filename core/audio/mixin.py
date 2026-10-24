@@ -1,7 +1,6 @@
 import asyncio
+import re
 import traceback
-
-
 
 import time
 from datetime import datetime
@@ -66,20 +65,64 @@ class AudioMixin:
             return self._wake_detector.start()
         return True
 
+    def _enqueue_mic_audio(self, msg: dict) -> None:
+        if self.out_queue is None:
+            return
+        if self.out_queue.full():
+            try:
+                self.out_queue.get_nowait()
+            except Exception:
+                pass
+        try:
+            self.out_queue.put_nowait(msg)
+        except asyncio.QueueFull:
+            try:
+                self.out_queue.get_nowait()
+                self.out_queue.put_nowait(msg)
+            except Exception:
+                pass
+
     async def _send_realtime(self):
+        half_full_start: float | None = None
+        warned_congestion = False
         while True:
+            if self.out_queue is not None:
+                max_s = getattr(self.out_queue, "maxsize", 200) or 200
+                q_size = self.out_queue.qsize()
+                if q_size > max_s // 2:
+                    now = time.monotonic()
+                    if half_full_start is None:
+                        half_full_start = now
+                    elif (now - half_full_start) >= 3.0:
+                        if not warned_congestion:
+                            warned_congestion = True
+                            if hasattr(self, "ui") and hasattr(self.ui, "write_log"):
+                                self.ui.write_log("SYS: Weak connection — audio delayed")
+                            print("[Audio] ⚠️ Weak connection — audio delayed")
+                    while self.out_queue.qsize() > 10:
+                        try:
+                            self.out_queue.get_nowait()
+                        except Exception:
+                            break
+                else:
+                    half_full_start = None
+                    warned_congestion = False
+
             msg = await self.out_queue.get()
-            # Gemini 3.x Live rejects the old realtime_input.media_chunks field
-            # (what `media=...` maps to) and closes the socket with a 1007. Send
-            # mic / phone PCM through the new `audio` field instead. Queue items
-            # are {"data": <bytes>, "mime_type": <str>} from _listen_audio and
-            # the phone relay.
-            await self.session.send_realtime_input(
-                audio=types.Blob(
-                    data=msg["data"],
-                    mime_type=msg.get("mime_type", "audio/pcm"),
+            try:
+                await asyncio.wait_for(
+                    self.session.send_realtime_input(
+                        audio=types.Blob(
+                            data=msg["data"],
+                            mime_type=msg.get("mime_type", "audio/pcm"),
+                        )
+                    ),
+                    timeout=5.0,
                 )
-            )
+            except asyncio.TimeoutError:
+                pass
+            except Exception:
+                raise
 
     async def _listen_audio(self):
         print("[JARVIS] 🎤 Mic started")
@@ -140,7 +183,7 @@ class AudioMixin:
                         if not self.ui.muted and not self._phone_active:
                             data = indata.tobytes()
                             loop.call_soon_threadsafe(
-                                self.out_queue.put_nowait,
+                                self._enqueue_mic_audio,
                                 {"data": data, "mime_type": "audio/pcm"}
                             )
                             self._recent_user_audio.append(indata.copy())
@@ -180,7 +223,7 @@ class AudioMixin:
                 if self.out_queue is not None:
                     data = indata.tobytes()
                     loop.call_soon_threadsafe(
-                        self.out_queue.put_nowait,
+                        self._enqueue_mic_audio,
                         {"data": data, "mime_type": "audio/pcm"}
                     )
                 self._recent_user_audio.append(indata.copy())
@@ -295,7 +338,7 @@ class AudioMixin:
                                 self._last_user_speech = time.monotonic()
                                 from core.activity import record_user_speech
 
-                                record_user_speech()
+                                record_user_speech(txt)
 
                         if sc.turn_complete:
                             if self._turn_done_event:
@@ -370,11 +413,13 @@ class AudioMixin:
                                     asyncio.create_task(self._do_voice_enrollment())
 
                                 # Action kill-switch voice command
-                                if any(w in full_in_lower for w in ("stop that", "cancel that", "don't send", "abort", "روڪيو", "منسوخ ڪريو")):
-                                    print(f"[JARVIS] 🛑 Kill-switch voice command: '{full_in}'")
-                                    from actions.send_message import abort_current_action
-                                    abort_current_action()
-                                    self.interrupt()
+                                from actions.send_message import is_action_pending, abort_current_action
+                                if is_action_pending():
+                                    words = set(re.findall(r"\b\w+\b", full_in_lower))
+                                    if words.intersection({"stop", "cancel", "abort"}) or any(w in full_in_lower for w in ("stop that", "cancel that", "don't send", "روڪيو", "منسوخ ڪريو")):
+                                        print(f"[JARVIS] 🛑 Kill-switch voice command: '{full_in}'")
+                                        abort_current_action()
+                                        self.interrupt()
 
                                 # Section 13/6 disabled for Phase 2
                                 # try:
@@ -433,9 +478,27 @@ class AudioMixin:
                     if response.tool_call:
                         fn_responses = []
                         for fc in response.tool_call.function_calls:
-                            from core.activity import record_tool_call
-
+                            from core.activity import record_tool_call, get_last_user_speech_info
                             record_tool_call()
+                            last_speech_time, last_speech_txt = get_last_user_speech_info()
+                            now = time.monotonic()
+                            if last_speech_time is None or (now - last_speech_time) > 60.0:
+                                audit_line = f"[Audit] ⚠️ UNPROMPTED TOOL CALL: {fc.name}({fc.args}) | No user speech in last 60s"
+                            else:
+                                elapsed = now - last_speech_time
+                                audit_line = f"[Audit] Tool call: {fc.name}({fc.args}) | Preceding speech ({elapsed:.1f}s ago): \"{last_speech_txt}\""
+                            print(audit_line)
+                            if hasattr(self, "ui") and hasattr(self.ui, "write_log"):
+                                self.ui.write_log(audit_line)
+                            try:
+                                import os
+                                from datetime import datetime
+                                os.makedirs("logs", exist_ok=True)
+                                with open("logs/jarvis_activity.log", "a", encoding="utf-8") as f:
+                                    f.write(f"[{datetime.now().strftime('%H:%M:%S.%f')[:-3]}] {audit_line}\n")
+                            except Exception:
+                                pass
+
                             print(f"[JARVIS] 📞 {fc.name}")
                             fr = await self._execute_tool(fc)
                             fn_responses.append(fr)
