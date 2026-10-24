@@ -1,8 +1,6 @@
 """Bugs found in the owner's own log (2026-10-24)."""
 import ast
-import sys
 import time
-import types
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent

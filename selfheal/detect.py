@@ -82,10 +82,17 @@ def safe_execute(tool_name: str, func, *args, **kwargs):
         # Simple heuristic result validation
         if result is None:
             raise ValueError(f"Tool {tool_name} returned None, which indicates failure or incomplete action.")
-        if isinstance(result, str) and ("error" in result.lower() or "failed" in result.lower()):
-            if "not found" not in result.lower() and "untrusted" not in result.lower():
-                # Allow 'not found' or 'untrusted' responses as valid results, others as soft fails
-                raise RuntimeError(f"Tool {tool_name} soft-failed: {result}")
+        if isinstance(result, str):
+            if result.startswith("DONE:"):
+                _record_success(tool_name, duration)
+                return True, result, duration
+            if result.startswith("NOT DONE:"):
+                _record_incident(tool_name, RuntimeError(result), kwargs, duration)
+                return False, result, duration
+            if "error" in result.lower() or "failed" in result.lower():
+                if "not found" not in result.lower() and "untrusted" not in result.lower():
+                    # Allow 'not found' or 'untrusted' responses as valid results, others as soft fails
+                    raise RuntimeError(f"Tool {tool_name} soft-failed: {result}")
             
         _record_success(tool_name, duration)
         return True, result, duration
@@ -96,4 +103,6 @@ def safe_execute(tool_name: str, func, *args, **kwargs):
         # Log to stdout for dev server
         print(f"[SelfHeal] Caught failure in {tool_name}: {e}")
         # Send error context back to model so it can attempt a different path
-        return False, f"Action failed internally ({type(e).__name__}): {str(e)}", duration
+        # Keep real reason in the first 200 characters and start with NOT DONE:
+        err_msg = str(e)
+        return False, f"NOT DONE: Action failed internally ({type(e).__name__}): {err_msg}", duration

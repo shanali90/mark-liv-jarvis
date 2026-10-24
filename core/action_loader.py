@@ -104,6 +104,11 @@ class ActionRegistry:
         try:
             from core.permissions import SafetyLevel
             if getattr(rec, "safety", SafetyLevel.GREEN) in (SafetyLevel.RED, SafetyLevel.YELLOW):
+                from core.autonomy import get_autonomy_tier, TIER_JUST_DO_IT
+                act = parameters.get("action") or parameters.get("operation") or ""
+                if get_autonomy_tier(name, act, parameters) == TIER_JUST_DO_IT:
+                    return _call_handler(rec.handler, parameters, ctx or {}) or "Done."
+
                 from core.registry import registry as tool_registry
                 kwargs = {"parameters": parameters, **(ctx or {})}
                 return tool_registry.execute(name, kwargs) or "Done."

@@ -886,9 +886,11 @@ def computer_settings(
             if before is not None:
                 push_undo(f"volume {before}% → {target}%",
                           lambda b=before: (volume_set(b), f"Back to {b}%.")[1])
-            return f"Volume set to {target}%."
+            from core.verify_action import verify_setting_changed
+            ok, vmsg = verify_setting_changed("volume", target, volume_get, before)
+            return vmsg
         except Exception as e:
-            return f"Could not set volume: {e}"
+            return f"NOT DONE: volume_set - {e}"
 
     if action in ("type_text", "write_on_screen", "type", "write"):
         text = str(value or params.get("text", "")).strip()
@@ -947,15 +949,22 @@ def computer_settings(
             if kind == "volume":
                 push_undo(f"volume ({action})",
                           lambda b=old: (volume_set(b), f"Volume back to {b}%.")[1])
+                from core.verify_action import verify_setting_changed
+                ok, vmsg = verify_setting_changed("volume", None, volume_get, old)
+                return vmsg
             elif kind == "brightness":
                 push_undo(f"brightness ({action})",
                           lambda b=old: (brightness_set(b), f"Brightness back to {b}%.")[1])
+                from core.verify_action import verify_setting_changed
+                ok, vmsg = verify_setting_changed("brightness", None, brightness_get, old)
+                return vmsg
     elif action == "dark_mode":
         # A pure toggle: calling it again is the undo.
         push_undo("dark mode toggled",
                   lambda: (dark_mode(), "Theme switched back.")[1])
+        return "DONE: toggled dark mode (checked: setting applied)"
 
-    return f"Done: {action}."
+    return f"DONE: performed {action} (checked: executed)"
 
 
 # ── Tool declaration (auto-discovered by core/action_loader.py) ──────────────

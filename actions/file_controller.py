@@ -274,9 +274,11 @@ def create_file(path: str, name: str = "", content: str = "") -> str:
         target.write_text(content, encoding="utf-8")
         push_undo(f"created {target.name}",
                   _undo_write(target, previous) if existed else _undo_create(target))
-        return f"File created: {target.name}"
+        if target.is_file():
+            return f"DONE: created file '{target}' (checked: path exists)"
+        return f"NOT DONE: create file - could not verify file '{target}' exists"
     except Exception as e:
-        return f"Could not create file: {e}"
+        return f"NOT DONE: create file - {e}"
 
 
 def create_folder(path: str, name: str = "") -> str:
@@ -293,11 +295,11 @@ def create_folder(path: str, name: str = "") -> str:
         if not already:
             push_undo(f"created folder {target.name}", _undo_create(target))
         if not target.is_dir():
-            return f"I could not create the folder {target}."
-        return (f"Folder already existed: {target}" if already
-                else f"Folder created: {target}")
+            return f"NOT DONE: create folder - could not create folder {target}"
+        return (f"DONE: folder already existed at {target} (checked: path exists)" if already
+                else f"DONE: created folder {target} (checked: path exists)")
     except Exception as e:
-        return f"Could not create folder: {e}"
+        return f"NOT DONE: create folder - {e}"
 
 
 def delete_file(path: str, name: str = "") -> str:
@@ -319,15 +321,16 @@ def delete_file(path: str, name: str = "") -> str:
 
         original = target.resolve()
         result   = _safe_trash(target)
-        if result.startswith("Moved to Trash"):
+        if result.startswith("Moved to Trash") or not original.exists():
             push_undo(f"deleted {original.name}",
                       lambda p=original: _restore_from_trash(p))
-        return result
+            return f"DONE: deleted '{original.name}' (checked: file moved to trash)"
+        return f"NOT DONE: delete '{original.name}' - {result}"
 
     except PermissionError:
-        return f"Permission denied: {path}"
+        return f"NOT DONE: delete file - permission denied: {path}"
     except Exception as e:
-        return f"Could not delete: {e}"
+        return f"NOT DONE: delete file - {e}"
 
 
 def move_file(path: str, name: str = "", destination: str = "") -> str:
@@ -353,10 +356,12 @@ def move_file(path: str, name: str = "", destination: str = "") -> str:
         shutil.move(str(src), str(dst))
         push_undo(f"moved {origin.name} to {dst.parent.name}/",
                   _undo_move(origin, dst.resolve()))
-        return f"Moved: {src.name} → {dst.parent.name}/"
+        if dst.exists():
+            return f"DONE: moved '{src.name}' to '{dst.parent.name}/' (checked: destination exists)"
+        return f"NOT DONE: move '{src.name}' - destination '{dst}' not found after move"
 
     except Exception as e:
-        return f"Could not move: {e}"
+        return f"NOT DONE: move file - {e}"
 
 
 def copy_file(path: str, name: str = "", destination: str = "") -> str:
@@ -395,11 +400,12 @@ def copy_file(path: str, name: str = "", destination: str = "") -> str:
                 _copy.unlink()
             return f"Removed the copy in {_copy.parent.name}/."
         push_undo(f"copied {src.name} to {dst.parent.name}/", _undo_copy)
-
-        return f"Copied: {src.name} → {dst.parent.name}/"
+        if dst.exists():
+            return f"DONE: copied '{src.name}' to '{dst.parent.name}/' (checked: destination exists)"
+        return f"NOT DONE: copy '{src.name}' - destination '{dst}' not found after copy"
 
     except Exception as e:
-        return f"Could not copy: {e}"
+        return f"NOT DONE: copy file - {e}"
 
 
 def rename_file(path: str, name: str = "", new_name: str = "") -> str:
@@ -421,10 +427,12 @@ def rename_file(path: str, name: str = "", new_name: str = "") -> str:
         target.rename(new_path)
         push_undo(f"renamed {old_path.name} to {new_name}",
                   _undo_move(old_path, new_path.resolve()))
-        return f"Renamed: {target.name} → {new_name}"
+        if new_path.exists():
+            return f"DONE: renamed '{old_path.name}' to '{new_name}' (checked: new file exists)"
+        return f"NOT DONE: rename '{old_path.name}' - could not verify new file '{new_name}'"
 
     except Exception as e:
-        return f"Could not rename: {e}"
+        return f"NOT DONE: rename file - {e}"
 
 
 def read_file(path: str, name: str = "", max_chars: int = 4000) -> str:

@@ -58,6 +58,7 @@ class SettingsOverlay(QWidget):
         cfg = _read_full_config()
         self._clock_24h_val = bool(cfg.get("clock_24h", False))
         self._reduce_anim_val = bool(cfg.get("reduce_animations", False))
+        self._ask_before_acting_val = bool(cfg.get("ask_before_acting", False))
 
         lay = QVBoxLayout(self)
         lay.setContentsMargins(20, 16, 20, 16)
@@ -121,6 +122,19 @@ class SettingsOverlay(QWidget):
         anim_desc.setStyleSheet(f"color: {C.TEXT_DIM}; background: transparent; padding-left: 24px;")
         lay.addWidget(anim_desc)
 
+        lay.addSpacing(4)
+
+        # Ask me before acting checkbox
+        self._cb_ask = QCheckBox("Ask me before acting")
+        self._cb_ask.setChecked(self._ask_before_acting_val)
+        self._cb_ask.toggled.connect(self._on_ask_toggled)
+        lay.addWidget(self._cb_ask)
+
+        ask_desc = QLabel("Require explicit confirmation before every tool action")
+        ask_desc.setFont(QFont("Segoe UI", 8))
+        ask_desc.setStyleSheet(f"color: {C.TEXT_DIM}; background: transparent; padding-left: 24px;")
+        lay.addWidget(ask_desc)
+
         lay.addSpacing(6)
         sep2 = QFrame()
         sep2.setFrameShape(QFrame.Shape.HLine)
@@ -181,7 +195,12 @@ class SettingsOverlay(QWidget):
     def _on_anim_toggled(self, checked: bool) -> None:
         self._reduce_anim_val = checked
         self._persist(reduce_animations=checked)
-        self.settings_changed.emit({"clock_24h": self._clock_24h_val, "reduce_animations": checked})
+        self.settings_changed.emit({"clock_24h": self._clock_24h_val, "reduce_animations": checked, "ask_before_acting": self._ask_before_acting_val})
+
+    def _on_ask_toggled(self, checked: bool) -> None:
+        self._ask_before_acting_val = checked
+        self._persist(ask_before_acting=checked)
+        self.settings_changed.emit({"clock_24h": self._clock_24h_val, "reduce_animations": self._reduce_anim_val, "ask_before_acting": checked})
 
     def _close(self) -> None:
         self.hide()

@@ -444,16 +444,24 @@ def _open_native(url: str, browser_name: Optional[str] = None) -> str:
             args = [chrome_exe]
             if url:
                 args.append(url)
-            subprocess.Popen(
+            proc = subprocess.Popen(
                 args,
                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
             )
             from core.tab_finder import service_name
-
+            name = service_name(url) if url else "Chrome"
+            if url and proc is not None and hasattr(proc, "pid"):
+                try:
+                    from core.verify_action import verify_website_opened
+                    ok, vmsg = verify_website_opened(url, check_already_open=False, timeout=5.0)
+                    if not ok:
+                        return vmsg
+                except Exception:
+                    pass
             return f"Opened a new {service_name(url)} tab" if url else "Opened a new Chrome tab"
         except Exception as e:
             print(f"[Browser] Chrome launch failed: {e}")
-            return f"Failed to launch Chrome: {e}"
+            return f"NOT DONE: launch Chrome - {e}"
 
     # If user explicitly specified a different browser (e.g. edge, brave)
     if target_browser != "chrome":
@@ -1096,8 +1104,7 @@ def browser_control(
 
                     if find_and_focus_existing(_normalize_url(native_url)):
                         result = (
-                            "Switched to your already-open "
-                            f"{service_name(native_url)} tab"
+                            "Switched to your already-open " f"{service_name(native_url)} tab"
                         )
                         _log(player, result)
                         return result

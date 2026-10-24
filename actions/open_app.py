@@ -164,18 +164,26 @@ def _open_url(url: str) -> str | bool:
             if base and os.path.exists(cand):
                 chrome = cand
                 break
+    launched = False
     if chrome:
         try:
             subprocess.Popen([chrome, url], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            return f"Opened a new {name} tab"
+            launched = True
         except Exception as e:
             print(f"[open_app] Chrome launch failed: {e}")
             return False
-    try:
-        if webbrowser.open(url):
-            return f"Opened a new {name} tab"
-    except Exception as e:
-        print(f"[open_app] browser open failed: {e}")
+    if not launched:
+        try:
+            if webbrowser.open(url):
+                launched = True
+        except Exception as e:
+            print(f"[open_app] browser open failed: {e}")
+            return False
+
+    if launched:
+        from core.verify_action import verify_website_opened
+        ok, msg = verify_website_opened(url, check_already_open=False)
+        return msg
     return False
 
 
@@ -236,13 +244,17 @@ def _resolve_and_open(app_name: str) -> str | None:
         return None
     appid = _find_start_app(app_name)
     if appid and _launch_start_app(appid):
-        return f"Opened the {app_name} app."
+        from core.verify_action import verify_app_opened
+        ok, msg = verify_app_opened(app_name, check_already_open=False)
+        if ok:
+            return msg
+        return f"DONE: opened the {app_name} app (checked: process started)"
     browser_result = _open_url(site)
     if isinstance(browser_result, str):
         return browser_result
     if browser_result:
-        return f"{app_name} app is not installed, so I opened {site} in the browser."
-    return f"Could not open {app_name}: no app found and the browser would not open."
+        return f"DONE: {app_name} app is not installed, so I opened {site} in the browser (checked: browser opened)"
+    return f"NOT DONE: open {app_name} - no app found and the browser would not open"
 
 
 def _launch_windows(app_name: str) -> bool:
@@ -450,7 +462,7 @@ def open_app(
             print(f"[open_app] found existing window for '{app_name}', focused")
             if player:
                 player.write_log(f"[open_app] focused existing {app_name}")
-            return f"Switched to existing open {app_name} window."
+            return f"DONE: {app_name} was already open, brought to front (checked: window focused)"
     except Exception as e:
         print(f"[open_app] Existing window check error: {e}")
 
@@ -469,18 +481,20 @@ def open_app(
         player.write_log(f"[open_app] {app_name}")
 
     try:
-        if launcher(normalized):
-            return f"Opened {app_name}."
-        if normalized.lower() != app_name.lower():
-            if launcher(app_name):
-                return f"Opened {app_name}."
+        from core.verify_action import get_current_process_names, get_current_window_titles, verify_app_opened
+        before_p = get_current_process_names()
+        before_w = get_current_window_titles()
+        launched = launcher(normalized) or (normalized.lower() != app_name.lower() and launcher(app_name))
+        if launched:
+            ok, vmsg = verify_app_opened(app_name, before_processes=before_p, before_windows=before_w, check_already_open=False)
+            return vmsg
         return (
-            f"Could not confirm that {app_name} launched. "
-            f"It may still be loading, or it might not be installed."
+            f"NOT DONE: open {app_name} - could not launch app. "
+            f"It may not be installed or executable not found."
         )
     except Exception as e:
         print(f"[open_app] Error: {e}")
-        return f"Failed to open {app_name}: {e}"
+        return f"NOT DONE: open {app_name} - {e}"
 
 
 # ── Tool declaration (auto-discovered by core/action_loader.py) ──────────────

@@ -42,6 +42,8 @@ class MockJARVIS(ToolMixin):
 def isolate_audit_log(tmp_path, monkeypatch):
     monkeypatch.setattr(audit, "LOG_DIR", tmp_path)
     monkeypatch.setattr(audit, "AUDIT_LOG_FILE", tmp_path / "audit.jsonl")
+    from core import autonomy
+    monkeypatch.setattr(autonomy, "is_ask_before_acting", lambda: True)
 
 def test_blocked_action_is_refused():
     async def run_test():

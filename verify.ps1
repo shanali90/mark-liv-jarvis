@@ -118,6 +118,9 @@ try {
                 Stop-Process -Id $TreePids[$Index] -Force -ErrorAction SilentlyContinue
             }
             Stop-Process -Id $StartedPid -Force -ErrorAction SilentlyContinue
+            Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
+                Where-Object { $_.CommandLine -and $_.CommandLine.IndexOf($Root, [System.StringComparison]::OrdinalIgnoreCase) -ge 0 -and $_.Name -match '^python' } |
+                ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
             Start-Sleep -Seconds 2
         } catch {
             Write-Output "Process-tree cleanup error: $_"

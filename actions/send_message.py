@@ -222,52 +222,73 @@ def _search_in_app(query: str) -> bool:
 
 
 def _send_whatsapp(receiver: str, message: str) -> str:
-    """Send a WhatsApp message using Playwright DOM selectors (Section 17)."""
+    """Send a WhatsApp message reusing the open tab or reporting NOT DONE."""
     if is_action_aborted():
-        return "Aborted: Action cancelled by user."
+        return "NOT DONE: send WhatsApp message - action cancelled by user"
 
+    from core.tab_finder import find_and_focus_existing
+
+    # 1. Reuse existing open WhatsApp tab
+    focused = False
     try:
-        from actions.browser_control import _registry
-        sess = _registry.get("chrome")
+        focused = find_and_focus_existing("https://web.whatsapp.com") or find_and_focus_existing("whatsapp")
     except Exception as e:
-        return f"Could not get Chrome session: {e}"
+        print(f"[SendMessage] WhatsApp tab search error: {e}")
 
-    async def _wa_flow():
-        page = await sess._get_page()
-        if "web.whatsapp.com" not in page.url:
-            await page.goto("https://web.whatsapp.com", wait_until="domcontentloaded")
-            # Wait for the main page to load
-            await page.wait_for_timeout(3000)
-        
-        # Look for search box
-        try:
-            search_box = page.locator('div[contenteditable="true"][data-tab="3"]')
-            await search_box.wait_for(timeout=20_000)
-            await search_box.click()
-            await search_box.fill(receiver)
-            await page.wait_for_timeout(1000) # Wait for results
-            await page.keyboard.press("Enter")
-        except Exception as e:
-            return f"Failed to search for contact: {e}"
+    if not focused:
+        return "NOT DONE: send WhatsApp message - WhatsApp tab is not open; please open WhatsApp first"
 
-        # Look for message box
-        try:
-            msg_box = page.locator('div[contenteditable="true"][data-tab="10"], div[title="Type a message"]')
-            await msg_box.first.wait_for(timeout=10_000)
-            await msg_box.first.click()
-            await msg_box.first.fill(message)
-            await page.wait_for_timeout(500)
-            await page.keyboard.press("Enter")
-        except Exception as e:
-            return f"Failed to type message: {e}"
-            
-        await page.wait_for_timeout(500)
-        return f"Message sent to {receiver} via WhatsApp Web."
+    _require_pyautogui()
+    if _sleep_interruptible(0.4):
+        return "NOT DONE: send WhatsApp message - action cancelled by user"
 
+    # Clear dialogs/focus search
+    pyautogui.press("esc")
+    time.sleep(0.15)
+    pyautogui.press("esc")
+    time.sleep(0.15)
+    pyautogui.hotkey("ctrl", "alt", "/")
+    time.sleep(0.4)
+
+    if not _clear_and_paste(receiver):
+        return "NOT DONE: send WhatsApp message - could not search contact"
+
+    if _sleep_interruptible(1.0):
+        return "NOT DONE: send WhatsApp message - action cancelled by user"
+
+    pyautogui.press("enter")
+    if _sleep_interruptible(0.8):
+        return "NOT DONE: send WhatsApp message - action cancelled by user"
+
+    # Capture before frame for confirmation
+    before_shot = None
     try:
-        return sess.run(_wa_flow(), timeout=60)
-    except Exception as e:
-        return f"Playwright WhatsApp flow failed: {e}"
+        from actions.computer_control import _screen_thumbnail, _screen_changed
+        before_shot = _screen_thumbnail()
+    except Exception:
+        pass
+
+    if not _paste_text(message):
+        return "NOT DONE: send WhatsApp message - could not paste message text"
+
+    if _sleep_interruptible(0.3):
+        return "NOT DONE: send WhatsApp message - action cancelled by user"
+
+    pyautogui.press("enter")
+    time.sleep(1.0)
+
+    checked = False
+    if before_shot is not None:
+        try:
+            after_shot = _screen_thumbnail()
+            if _screen_changed(before_shot, after_shot):
+                checked = True
+        except Exception:
+            pass
+
+    if checked:
+        return f"DONE: sent '{message[:30]}' to {receiver} via WhatsApp (checked: message bubble verified on screen)"
+    return f"UNSURE: sent '{message[:30]}' to {receiver} via WhatsApp - I could not confirm it"
 
 
 def _desktop_send(app_name: str, receiver: str, message: str) -> str:

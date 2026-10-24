@@ -479,6 +479,7 @@ class AudioMixin:
                                 if full_out in self._last_out_logged:
                                     full_out = ""
                             if full_out:
+                                self._last_reply_time = time.monotonic()
                                 self._last_out_logged = full_out
                                 self.ui.write_log(f"{self._asst_name}: {full_out}")
                                 self._session_log.append(f"{self._asst_name}: {full_out}")
@@ -512,6 +513,36 @@ class AudioMixin:
                             from core.activity import record_tool_call, get_last_user_speech_info
                             record_tool_call()
                             last_speech_time, last_speech_txt = get_last_user_speech_info()
+                            from core.speech_gate import decide_action_allowed
+                            now_mono = time.monotonic()
+                            last_cmd = getattr(self, "_last_accepted_cmd_time", 0.0)
+                            last_rep = getattr(self, "_last_reply_time", 0.0)
+                            speech_state = {
+                                "is_awake": not self._is_asleep(),
+                                "assistant_name": self._asst_name,
+                                "last_command_time": last_cmd,
+                                "last_reply_time": last_rep,
+                                "now": now_mono,
+                            }
+                            allowed, block_reason = decide_action_allowed(last_speech_txt, speech_state)
+                            if not allowed:
+                                blocked_msg = f"[Audit] 🛑 Blocked background noise tool call {fc.name}: {block_reason} | Preceding speech: \"{last_speech_txt}\""
+                                print(blocked_msg)
+                                if hasattr(self, "ui") and hasattr(self.ui, "write_log"):
+                                    self.ui.write_log(f"[Audit] Ignored: {block_reason}")
+                                try:
+                                    import os
+                                    os.makedirs("logs", exist_ok=True)
+                                    with open("logs/jarvis_activity.log", "a", encoding="utf-8") as f_log:
+                                        f_log.write(f"[{datetime.now().strftime('%H:%M:%S.%f')[:-3]}] {blocked_msg}\n")
+                                except Exception:
+                                    pass
+                                fn_responses.append(types.FunctionResponse(
+                                    id=fc.id, name=fc.name,
+                                    response={"result": "NOT DONE: ignored - that did not sound like a command for me"},
+                                ))
+                                continue
+                            self._last_accepted_cmd_time = now_mono
                             now = time.monotonic()
                             if last_speech_time is None or (now - last_speech_time) > 60.0:
                                 audit_line = f"[Audit] ⚠️ UNPROMPTED TOOL CALL: {fc.name}({fc.args}) | No user speech in last 60s"
