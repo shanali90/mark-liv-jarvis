@@ -155,10 +155,23 @@ class ErrorLogLimiter:
         return True
 
 
-def safe_error_summary(error: BaseException) -> str:
-    """Describe a connection error without exposing credential-shaped strings."""
+def format_disconnect_reason(error: BaseException, max_message_len: int = 150) -> str:
+    """Describe a connection error: class, HTTP/close code, and first 150 chars of server message (never the key)."""
     unwrapped = unwrap_exception(error)
-    text = str(unwrapped)
+    cls_name = type(unwrapped).__name__
+
+    codes = _error_codes(unwrapped)
+    code_val = getattr(unwrapped, "code", getattr(unwrapped, "status_code", getattr(unwrapped, "close_code", None)))
+    if code_val is not None:
+        try:
+            codes.add(int(code_val))
+        except (ValueError, TypeError):
+            pass
+
+    code_str = f" [{', '.join(str(c) for c in sorted(codes))}]" if codes else ""
+
+    raw_text = getattr(unwrapped, "message", None) or str(unwrapped)
+    text = str(raw_text)
     for pattern in (
         r"AIza[A-Za-z0-9_-]{12,}",
         r"sk-ant-[A-Za-z0-9_-]{12,}",
@@ -168,7 +181,32 @@ def safe_error_summary(error: BaseException) -> str:
         r"(?i:[?&](?:key|api_key|access_token)=)[^&\s]+",
     ):
         text = re.sub(pattern, "[REDACTED]", text)
-    return f"{type(unwrapped).__name__}: {text[:240]}"
+
+    clean_msg = " ".join(text.strip().split())[:max_message_len]
+    return f"{cls_name}{code_str}: {clean_msg}"
+
+
+def safe_error_summary(error: BaseException) -> str:
+    """Describe a connection error without exposing credential-shaped strings."""
+    return format_disconnect_reason(error, max_message_len=240)
+
+
+class PlannedReconnectLimiter:
+    """Rate-limit planned reconnects: allow up to 3 within 20s; beyond that, apply normal backoff."""
+
+    def __init__(self, max_count: int = 3, window_seconds: float = 20.0):
+        self.max_count = max_count
+        self.window_seconds = window_seconds
+        self._timestamps: list[float] = []
+
+    def record_and_should_backoff(self, now: float | None = None) -> bool:
+        now = time.monotonic() if now is None else now
+        self._timestamps = [t for t in self._timestamps if now - t <= self.window_seconds]
+        self._timestamps.append(now)
+        return len(self._timestamps) > self.max_count
+
+    def reset(self) -> None:
+        self._timestamps.clear()
 
 
 async def wait_for_api_dns(
