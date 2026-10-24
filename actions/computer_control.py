@@ -83,10 +83,17 @@ _SAFE_SCREENSHOT_ROOTS = (
 )
 
 def _safe_screenshot_path(requested: str | None) -> Path:
-    fallback = Path.home() / "Desktop" / "jarvis_screenshot.png"
+    from core.paths import desktop as _real_desktop
+    fallback = _real_desktop() / "jarvis_screenshot.png"
     if not requested:
         return fallback
     try:
+        # "desktop/x.png" means the user's real Desktop, not a folder called
+        # "desktop" inside the project (that is where it used to be saved).
+        from core.paths import user_folder as _user_folder
+        _parts = Path(str(requested).replace("\\", "/")).parts
+        if _parts and _parts[0].lower() in ("desktop", "downloads", "documents", "videos", "pictures"):
+            requested = str(_user_folder(_parts[0]).joinpath(*_parts[1:]))
         p = Path(requested).expanduser().resolve()
         for root in _SAFE_SCREENSHOT_ROOTS:
             if p.is_relative_to(root.resolve()):

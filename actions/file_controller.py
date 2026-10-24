@@ -140,7 +140,8 @@ def _get_desktop() -> Path:
         xdg = os.environ.get("XDG_DESKTOP_DIR", "")
         if xdg and Path(xdg).exists():
             return Path(xdg)
-    return Path.home() / "Desktop"
+    from core.paths import desktop as _real_desktop
+    return _real_desktop()
 
 def _get_downloads() -> Path:
     if _OS == "Linux":
@@ -291,7 +292,10 @@ def create_folder(path: str, name: str = "") -> str:
         # directory the user has had for years.
         if not already:
             push_undo(f"created folder {target.name}", _undo_create(target))
-        return f"Folder created: {target.name}"
+        if not target.is_dir():
+            return f"I could not create the folder {target}."
+        return (f"Folder already existed: {target}" if already
+                else f"Folder created: {target}")
     except Exception as e:
         return f"Could not create folder: {e}"
 

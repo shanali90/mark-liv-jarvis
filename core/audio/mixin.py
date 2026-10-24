@@ -307,6 +307,20 @@ class AudioMixin:
                                 print("[JARVIS] 🔗 Session resumption armed")
                             self._resume_handle = _sru.new_handle
 
+                    # The server announces the end of a long session with a GoAway and
+                    # expects us to leave. Staying on made it close the socket with
+                    # 1008 ("failed to close the connection after receiving a GoAway"),
+                    # cutting off whatever JARVIS was saying. Reconnect on the spot,
+                    # with the saved conversation handle, once per session.
+                    if getattr(response, "go_away", None) is not None \
+                            and getattr(self, "_goaway_session", None) is not self.session:
+                        self._goaway_session = self.session
+                        print("[JARVIS] Server GoAway - reconnecting now with the saved conversation.")
+                        try:
+                            self.request_reconnect(keep_context=True, reason="server GoAway")
+                        except Exception as _e:
+                            print(f"[JARVIS] GoAway reconnect request failed: {_e}")
+
                     if response.data:
                         if self._interrupted or self._is_asleep():
                             pass  # discard: interrupted, or asleep (nothing may speak)

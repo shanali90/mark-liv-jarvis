@@ -66,6 +66,14 @@ def get_user_name() -> str:
     return load_api_keys().get("user_name", "")
 
 
+def get_owner_name() -> str:
+    """Name JARVIS calls the owner (wake greeting). Falls back to 'sir'."""
+    try:
+        return (get_user_name() or "").strip() or "sir"
+    except Exception:
+        return "sir"
+
+
 def save_assistant_config(assistant_name: str, user_name: str) -> None:
     """Persist assistant name and user name to config."""
     ensure_config_dir()

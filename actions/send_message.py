@@ -22,15 +22,23 @@ except ImportError:
 # ── Global Action Kill-Switch ────────────────────────────────────────
 _ABORT_EVENT = threading.Event()
 _ACTION_PENDING = False
+_ACTION_SINCE = 0.0
+_ACTION_PENDING_TTL = 60.0     # a question nobody answered stops counting after this
 _ACTION_LOCK = threading.Lock()
 
 def set_action_pending(pending: bool) -> None:
-    global _ACTION_PENDING
+    global _ACTION_PENDING, _ACTION_SINCE
     with _ACTION_LOCK:
         _ACTION_PENDING = bool(pending)
+        _ACTION_SINCE = time.monotonic() if pending else 0.0
 
 def is_action_pending() -> bool:
+    """True only while an action is really waiting. It used to stay True for ever
+    after the first confirmation question, so every later interruption fired the
+    kill switch ("Kill-switch activated" with nothing running)."""
     with _ACTION_LOCK:
+        if _ACTION_PENDING and (time.monotonic() - _ACTION_SINCE) > _ACTION_PENDING_TTL:
+            return False
         return _ACTION_PENDING
 
 def abort_current_action() -> bool:
@@ -38,9 +46,8 @@ def abort_current_action() -> bool:
     
     Only fires if an action is actually pending. Returns True if aborted.
     """
-    with _ACTION_LOCK:
-        if not _ACTION_PENDING:
-            return False
+    if not is_action_pending():
+        return False
     _ABORT_EVENT.set()
     print("[SendMessage] 🛑 Kill-switch activated! Aborting pending action.")
     return True
@@ -48,6 +55,7 @@ def abort_current_action() -> bool:
 def reset_action_abort() -> None:
     """Reset the kill-switch flag before starting a new action."""
     _ABORT_EVENT.clear()
+    set_action_pending(False)
 
 def is_action_aborted() -> bool:
     """Return True if an abort has been requested."""
