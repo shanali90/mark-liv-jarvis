@@ -662,16 +662,19 @@ class JarvisLive(AudioMixin, ToolMixin):
             self.ui.set_state("LISTENING")
         # self.ui.set_emotion(joy=0.5, neutral=0.5)
         self.ui.write_log(f"SYS: Awake — {reason}.")
-        wake_phrase = "اسلام عليڪم سائين شان علي! جي سائين، مان حاضر آهيان."
+        from core.greeting import pick_greeting
+        from memory.config_manager import get_owner_name
+        owner_name = get_owner_name() or "sir"
+        wake_phrase = pick_greeting(datetime.now().hour, owner_name)
         print(f"[State] 🗣️ Wake vocal response: {wake_phrase}")
         try:
             from core.offline_engine import speak_offline
-            speak_offline("اسلام عليڪم سائين شان علي! جي سائين، مان حاضر آهيان.")
+            speak_offline(wake_phrase)
         except Exception as e:
             print(f"[State] Wake speech error: {e}")
-        if getattr(self, "session", None) and getattr(self, "_loop", None):
+        if hasattr(self.ui, "show_window"):
             try:
-                self.plugin_say("سائين شان علي اوهان کي جاڳايو آهي. احترام ۽ محبت سان جواب ڏيو: اسلام عليڪم سائين شان علي! جي سائين، مان اوهان جي خدمت لاءِ تيار آهيان.")
+                self.ui.show_window()
             except Exception:
                 pass
         if hasattr(self.ui, "on_wake_transition"):
@@ -1004,8 +1007,9 @@ class JarvisLive(AudioMixin, ToolMixin):
             self.ui.set_state("LISTENING")
         # self.ui.set_emotion(curiosity=0.6, neutral=0.4)
         try:
-            from actions.send_message import abort_current_action
-            abort_current_action()
+            from actions.send_message import abort_current_action, is_action_pending
+            if is_action_pending():
+                abort_current_action()
         except Exception:
             pass
         self.ui.write_log("SYS: Interrupted — listening...")
@@ -1184,6 +1188,8 @@ class JarvisLive(AudioMixin, ToolMixin):
         # stay in the session's context. 'medium' keeps on-screen text legible
         # for a fraction of a full-resolution frame.
         res = get_media_resolution()
+        if getattr(self, "_weak_connection", False):
+            res = "low"
         if res != "default":
             out["media_resolution"] = {
                 "low":    types.MediaResolution.MEDIA_RESOLUTION_LOW,
@@ -1591,7 +1597,15 @@ class JarvisLive(AudioMixin, ToolMixin):
             print(f"[Dashboard] Disabled: {e}")
             self._dashboard = None
 
+        from core.reconnect import (
+            ReconnectBackoff, ErrorLogLimiter, classify_disconnect,
+            DisconnectKind, unwrap_exception, safe_error_summary, wait_for_api_dns
+        )
+        backoff = ReconnectBackoff()
+        log_limiter = ErrorLogLimiter(interval=60.0)
+
         while True:
+            session_connected_time = None
             try:
                 print("[JARVIS] Connecting...")
                 if hasattr(self.ui, "set_connection_status"):
@@ -1616,10 +1630,21 @@ class JarvisLive(AudioMixin, ToolMixin):
                     http_options={"api_version": "v1alpha" if self._enhanced_live else "v1beta"}
                 )
 
+                t_conn_start = time.monotonic()
                 async with (
                     client.aio.live.connect(model=LIVE_MODEL, config=config) as session,
                     asyncio.TaskGroup() as tg,
                 ):
+                    t_conn_dur = time.monotonic() - t_conn_start
+                    if t_conn_dur > 8.0:
+                        self._weak_connection = True
+                        from actions.screen_processor import set_weak_connection
+                        set_weak_connection(True)
+                    else:
+                        self._weak_connection = False
+                        from actions.screen_processor import set_weak_connection
+                        set_weak_connection(False)
+                    session_connected_time = time.monotonic()
                     self.session          = session
                     self.audio_in_queue   = asyncio.Queue()
                     self.out_queue        = asyncio.Queue(maxsize=200)
@@ -1685,29 +1710,17 @@ class JarvisLive(AudioMixin, ToolMixin):
             except BaseException as e:
                 if isinstance(e, BaseExceptionGroup) and all(isinstance(sub, asyncio.CancelledError) for sub in e.exceptions):
                     raise
-                # Catches both Exception and BaseExceptionGroup (Python 3.11+
-                # TaskGroup raises BaseExceptionGroup when tasks are cancelled
-                # externally, which `except Exception` would miss, letting the
-                # exception escape the while-loop and causing asyncio.run() to
-                # start shutdown — resulting in "executor after shutdown" errors).
-                # Voluntary reconnect (voice change) — not an error. Rebuild the
-                # session immediately with no backoff and no scary logs.
                 if _is_reconnect_signal(e):
                     print("[JARVIS] Voluntary reconnect requested.")
                     if not _keep_context_of(e):
-                        # A deliberate clean slate (voice change) — drop the
-                        # handle so the next connect really does start empty.
                         self._resume_handle = None
-                    self._conn_backoff = 0
+                    backoff.reset()
                     continue
 
-                # The API key itself was rejected. Checked FIRST: the server words
-                # this as INVALID_ARGUMENT, which the branches below would take
-                # for "live tuning rejected" and retry instantly, and an expired
-                # or revoked key never matched the old wording at all, so it
-                # retried every few seconds forever with no message.
-                from core.conn_errors import is_auth_error
-                if is_auth_error(str(e)):
+                unwrapped = unwrap_exception(e)
+                kind = classify_disconnect(e, resuming=_resumed_with)
+
+                if kind == DisconnectKind.AUTH:
                     print("[JARVIS] Gemini rejected the API key.")
                     self.ui.write_log(
                         "ERR: Gemini rejected the API key (invalid, expired or deleted). "
@@ -1718,35 +1731,22 @@ class JarvisLive(AudioMixin, ToolMixin):
                     while not self.ui._win._ready:
                         await asyncio.sleep(1)
                     print("[JARVIS] New API key saved — reconnecting...")
-                    self._conn_backoff = 3
+                    backoff.reset()
                     continue
 
-                # A resumption handle the server will not accept — expired, or
-                # belonging to a session it has since dropped. Without this, the
-                # same dead handle would be replayed on every retry and the
-                # assistant would never come back at all: the feature meant to
-                # survive a reconnect would be the thing preventing one. Drop it
-                # once and let the next attempt start clean.
-                if _resumed_with and (
-                    "resum" in str(e).lower()
-                    or "handle" in str(e).lower()
-                    or "INVALID_ARGUMENT" in str(e)
-                    or "NOT_FOUND" in str(e)
-                ):
+                if kind == DisconnectKind.RESUMPTION:
                     print("[JARVIS] 🔗 Resumption handle rejected — starting a fresh session")
                     self.ui.write_log("SYS: Could not restore the conversation — starting fresh.")
                     self._resume_handle = None
-                    self._conn_backoff = 0
+                    backoff.reset()
                     continue
 
-                err_str = str(e)
-                print(f"[JARVIS] Error ({type(e).__name__}): {e}")
-                traceback.print_exc()
+                if kind == DisconnectKind.PLANNED:
+                    print("[JARVIS] Planned server GoAway/session end — reconnecting immediately.")
+                    self.session = None
+                    continue
 
-                # Turn-taking / media / thinking knobs rejected by the server
-                # (preview API drift) — drop them first, because they are the
-                # newest fields and the cheapest to lose. Proactive audio is
-                # tried again on the next pass if the error persists.
+                err_str = str(unwrapped)
                 if self._tuned_live and (
                     "INVALID_ARGUMENT" in err_str
                     or "Unknown name" in err_str
@@ -1759,8 +1759,6 @@ class JarvisLive(AudioMixin, ToolMixin):
                     print("[JARVIS] Live tuning rejected — reconnecting without it.")
                     continue
 
-                # Proactive audio rejected by the server (preview API drift) —
-                # drop it and reconnect with the plain config.
                 if self._enhanced_live and (
                     "INVALID_ARGUMENT" in err_str
                     or "proactiv" in err_str.lower()
@@ -1773,23 +1771,28 @@ class JarvisLive(AudioMixin, ToolMixin):
                     )
                     continue
 
-                # Network / timeout errors — log clearly and back off
-                is_net_err = any(k in err_str for k in (
-                    "TimeoutError", "timed out", "getaddrinfo", "CancelledError",
-                    "ConnectionRefusedError", "OSError", "Cannot connect",
-                ))
-                if is_net_err:
-                    _conn_backoff = min(getattr(self, "_conn_backoff", 3) * 2, 60)
-                    self._conn_backoff = _conn_backoff
-                    self.ui.write_log(
-                        f"NET: Connection failed — retrying in {_conn_backoff}s. "
-                        "(a VPN may be required)"
-                    )
+                should_log = log_limiter.should_log(unwrapped)
+                if should_log:
+                    print(f"[JARVIS] Connection error ({type(unwrapped).__name__}): {safe_error_summary(unwrapped)}")
+                    if log_limiter.should_print_traceback(unwrapped):
+                        traceback.print_exception(type(unwrapped), unwrapped, unwrapped.__traceback__)
+
+                delay = backoff.next_delay()
+                if kind == DisconnectKind.NETWORK:
+                    if should_log:
+                        self.ui.write_log(
+                            f"NET: Connection failed ({type(unwrapped).__name__}) — retrying in {delay}s."
+                        )
                 else:
-                    self._conn_backoff = 3
+                    if should_log:
+                        self.ui.write_log(
+                            f"ERR: Session error ({type(unwrapped).__name__}) — retrying in {delay}s."
+                        )
             finally:
+                if session_connected_time is not None:
+                    backoff.reset_after_session(time.monotonic() - session_connected_time)
+                    session_connected_time = None
                 self.session = None
-                # Only save if there was a real conversation (≥1 turns)
                 if len(self._session_log) >= 1:
                     asyncio.create_task(self._save_session_summary())
 
@@ -1799,7 +1802,6 @@ class JarvisLive(AudioMixin, ToolMixin):
             if self._dashboard:
                 await self._dashboard.broadcast({"type": "status", "state": "sleeping"})
 
-            delay = getattr(self, "_conn_backoff", 3)
             print(f"[JARVIS] Reconnecting in {delay}s...")
             if hasattr(self.ui, "set_connection_status"):
                 self.ui.set_connection_status(f"🔴 RECONNECTING ({delay}s)", "#ff3355")
@@ -1814,6 +1816,7 @@ class JarvisLive(AudioMixin, ToolMixin):
                 pass
 
             await asyncio.sleep(delay)
+            await wait_for_api_dns("generativelanguage.googleapis.com", timeout=20.0)
 
 def main():
     import sys
@@ -1848,4 +1851,5 @@ def main():
     ui.root.mainloop()
 
 if __name__ == "__main__":
-    main()
+    from core.single_instance import run_with_named_mutex
+    sys.exit(run_with_named_mutex("Local\\JARVIS_SINGLE_INSTANCE_MUTEX", main))

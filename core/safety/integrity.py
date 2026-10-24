@@ -7,7 +7,7 @@ class SafetyIntegrityError(RuntimeError):
 
 
 SAFETY_FILE_HASHES = {
-    "main.py": "864b3ce8fc33a3f0ca05ae06baffa47524f84980eae00b99679bc2e3f8951750",
+    "main.py": "76be1b05c869e3e63253a0732adee080ed644228fbf5c8968f6b66b183147456",
     "core/confirm.py": "278bb754b6e073d598829492ece81743eafbcb4a5f41721aa703b0c6fe746f1d",
     "core/safety/trust.py": "4ce17935bbc18224e06f038db82669986a153aa96d63fd47d4756be8e6addfb3",
     "core/tools/mixin.py": "d0c9475545bed57f380fd6f78d9c2b9922e3207d8ee279a1a5705b6e0b9c9594",
