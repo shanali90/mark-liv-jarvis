@@ -1,5 +1,6 @@
 import json
 import subprocess
+import sys
 import time
 from pathlib import Path
 
@@ -127,9 +128,10 @@ def test_git_hook_secret_scan(tmp_path):
     # Run the hook using bash. If bash isn't available, we skip.
     # On Windows, Git bash is usually in PATH as 'bash'.
     try:
-        result = subprocess.run(["bash", str(hook_path)], cwd=tmp_path, capture_output=True)
+        command = [sys.executable, str(hook_path)] if sys.platform == "win32" else ["bash", "hook.sh"]
+        result = subprocess.run(command, cwd=tmp_path, capture_output=True)
         assert result.returncode == 1
-        assert b"Commit blocked" in result.stdout
+        assert b"Commit blocked" in result.stderr
     except FileNotFoundError:
         # Bash not found in path on Windows runner, skip actual execution
         pass

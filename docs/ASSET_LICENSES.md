@@ -9,3 +9,6 @@
 Mark-LIV modifies the asset for animated jaw, eye glow, blinking, and head
 motion. The full short credit is kept beside the model in
 `assets/avatar/robo_face.LICENSE.txt`.
+
+`assets/avatar/robo_face_lite.glb` is a modified, pre-decimated copy of the
+same CC BY 4.0 asset. It is used at runtime to keep the HUD responsive.

@@ -948,6 +948,14 @@ class HudCanvas(QWidget):
                 else:
                     _acc = qcol(C.PRI)
             self._avatar.paint(p, cx, _head_cy, _r_head, _main, _acc, qcol(C.BG))
+            if getattr(self._avatar, "fallback_requested", False):
+                try:
+                    from core.avatar import HoloAvatar
+                    self._avatar = HoloAvatar()
+                    self._avatar_kind = "classic"
+                    print("Robot avatar fallback: frame time exceeded 33 ms")
+                except Exception as exc:
+                    print(f"Robot avatar fallback unavailable: {exc}")
 
         # reactor core — the other centrepiece, and the fallback if the head
         # could not be built. There is no third path: the old face.png branch

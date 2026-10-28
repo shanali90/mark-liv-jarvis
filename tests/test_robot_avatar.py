@@ -1,4 +1,5 @@
 import math
+import time
 from pathlib import Path
 
 import pytest
@@ -6,6 +7,7 @@ import pytest
 from core.avatar_robot import (
     EYE_COLOURS,
     JAW_MAX_DEGREES,
+    ROBOT_LITE_ASSET,
     RobotAvatar,
     clamp_jaw_angle,
     map_named_parts,
@@ -39,3 +41,31 @@ def test_robot_state_eye_colour_table():
 def test_missing_robot_asset_triggers_classic_fallback_path(tmp_path: Path):
     with pytest.raises(FileNotFoundError):
         RobotAvatar(tmp_path / "missing.glb")
+
+
+def test_robot_loads_in_under_two_seconds():
+    started = time.perf_counter()
+    avatar = RobotAvatar()
+    assert time.perf_counter() - started < 2.0
+    assert avatar.asset_path == ROBOT_LITE_ASSET
+
+
+def test_robot_frame_is_under_33_ms():
+    from PyQt6.QtGui import QColor, QImage, QPainter
+    from PyQt6.QtWidgets import QApplication
+
+    app = QApplication.instance() or QApplication([])
+    assert app is not None
+    avatar = RobotAvatar()
+    image = QImage(980, 620, QImage.Format.Format_ARGB32_Premultiplied)
+    painter = QPainter(image)
+    avatar.paint(painter, 490, 260, 210, QColor("#5ee0ff"), QColor("#5ee0ff"), QColor("#050506"))
+    painter.end()
+    assert avatar._last_frame_seconds < 0.033
+
+
+def test_robot_fallback_triggers_after_slow_frames():
+    avatar = RobotAvatar()
+    for _ in range(avatar.SLOW_FRAME_LIMIT):
+        avatar.note_frame_time(0.034)
+    assert avatar.fallback_requested

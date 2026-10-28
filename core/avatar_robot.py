@@ -11,11 +11,13 @@ import json
 import math
 import random
 import struct
+import time
 from pathlib import Path
 
 import numpy as np
 
 ROBOT_ASSET = Path(__file__).resolve().parent.parent / "assets" / "avatar" / "robo_face.glb"
+ROBOT_LITE_ASSET = ROBOT_ASSET.with_name("robo_face_lite.glb")
 JAW_MAX_DEGREES = 14.0
 JAW_MAX_RADIANS = math.radians(JAW_MAX_DEGREES)
 EYE_COLOURS = {
@@ -130,12 +132,22 @@ class RobotAvatar:
     """GLB-backed avatar with the same driver surface as :class:`HoloAvatar`."""
 
     SPAN = 2.4
+    FRAME_LIMIT_SECONDS = 0.033
+    SLOW_FRAME_LIMIT = 5
 
-    def __init__(self, asset_path: Path | str = ROBOT_ASSET, quality: str = "high"):
-        self.asset_path = Path(asset_path)
+    def __init__(self, asset_path: Path | str | None = None, quality: str = "high"):
+        self.asset_path = Path(asset_path or (ROBOT_LITE_ASSET if ROBOT_LITE_ASSET.exists() else ROBOT_ASSET))
         self.quality = quality if quality in ("high", "low") else "high"
         self.document, self.binary = _read_glb(self.asset_path)
-        self.parts = inspect_robot_asset(self.asset_path)
+        names = [str(n.get("name", "")) for n in self.document.get("nodes", []) if n.get("name")]
+        names.extend(str(m.get("name", "")) for m in self.document.get("meshes", []) if m.get("name"))
+        self.parts = {
+            "version": self.document.get("asset", {}).get("version"),
+            "names": names,
+            "groups": map_named_parts(names),
+            "mesh_count": len(self.document.get("meshes", [])),
+            "node_count": len(self.document.get("nodes", [])),
+        }
         self.groups = self.parts["groups"]
         self._meshes = self._load_meshes()
         self._time = 0.0
@@ -148,22 +160,42 @@ class RobotAvatar:
         self._yaw = self._pitch = 0.0
         self._glance = None
         self._visible = True
+        self._last_frame_seconds = 0.0
+        self._slow_frames = 0
+        self._fallback_requested = False
+        self._cache_size = 480
+        self._static_layer = self._render_layer({"head", "neck", "spine", "wires"}, 0.0)
+        self._jaw_layer = self._render_layer({"jaw", "teeth"}, 0.0)
+        self._jaw_open_layer = self._render_layer({"jaw", "teeth"}, JAW_MAX_RADIANS)
+        self._eye_layer = self._render_layer({"eyes"}, 0.0)
 
     def _load_meshes(self) -> list[tuple[str, np.ndarray, np.ndarray, str]]:
         meshes = []
         nodes = self.document.get("nodes", [])
-        for node in nodes:
+        worlds: dict[int, np.ndarray] = {}
+
+        def world_matrix(index: int) -> np.ndarray:
+            if index in worlds:
+                return worlds[index]
+            node = nodes[index]
+            local = _node_matrix(node)
+            parent = next((i for i, candidate in enumerate(nodes)
+                           if index in candidate.get("children", [])), None)
+            worlds[index] = world_matrix(parent) @ local if parent is not None else local
+            return worlds[index]
+
+        for node_index, node in enumerate(nodes):
             if "mesh" not in node:
                 continue
             mesh = self.document["meshes"][node["mesh"]]
-            transform = _node_matrix(node)
+            transform = world_matrix(node_index)
             for primitive in mesh.get("primitives", []):
                 position = _accessor(self.document, self.binary, primitive["attributes"]["POSITION"])
                 indices = _accessor(self.document, self.binary, primitive.get("indices", 0)).reshape(-1)
                 hom = np.column_stack((position, np.ones(len(position), dtype=np.float32)))
                 transformed = (transform @ hom.T).T[:, :3]
-                meshes.append((str(node.get("name", mesh.get("name", ""))), transformed,
-                               indices.astype(np.int64), _group_for_name(str(node.get("name", "")))))
+                meshes.append((transformed, indices.astype(np.int64).reshape((-1, 3)),
+                               _group_for_name(str(node.get("name", "")))))
         if not meshes:
             raise ValueError("robot avatar contains no drawable POSITION primitives")
         return meshes
@@ -194,6 +226,19 @@ class RobotAvatar:
 
     def set_visible(self, visible: bool) -> None:
         self._visible = bool(visible)
+
+    @property
+    def fallback_requested(self) -> bool:
+        return self._fallback_requested
+
+    def note_frame_time(self, seconds: float) -> None:
+        self._last_frame_seconds = max(0.0, float(seconds))
+        if self._last_frame_seconds > self.FRAME_LIMIT_SECONDS:
+            self._slow_frames += 1
+            if self._slow_frames >= self.SLOW_FRAME_LIMIT:
+                self._fallback_requested = True
+        else:
+            self._slow_frames = 0
 
     def step(self, dt: float, amp: float, speaking: bool = False, muted: bool = False,
              state: str = "LISTENING", v_open=None, v_wide=0.0, v_level=None,
@@ -231,17 +276,39 @@ class RobotAvatar:
             elif self._state == "SLEEPING":
                 self._pitch -= math.radians(4)
 
-    def paint(self, painter, cx: float, cy: float, radius: float, primary, accent, bg) -> None:
-        """Draw a small, depth-sorted projection; Qt handles the final glow."""
+    def _render_layer(self, groups: set[str], jaw_angle: float):
+        from PyQt6.QtGui import QImage, QPainter, QColor, QBrush, QPen, QPolygonF
         from PyQt6.QtCore import QPointF
-        from PyQt6.QtGui import QColor, QPolygonF, QBrush, QPen
+
+        image = QImage(self._cache_size, self._cache_size,
+                       QImage.Format.Format_ARGB32_Premultiplied)
+        image.fill(0)
+        canvas = QPainter(image)
+        canvas.setRenderHint(QPainter.RenderHint.Antialiasing)
+        self._paint_meshes(canvas, self._cache_size / 2, self._cache_size / 2,
+                           self._cache_size * 0.42, groups, jaw_angle,
+                           QPointF, QColor, QBrush, QPen, QPolygonF)
+        canvas.end()
+        return image
+
+    def _paint_meshes(self, painter, cx, cy, radius, groups, jaw_angle,
+                      QPointF, QColor, QBrush, QPen, QPolygonF) -> None:
         scale = radius / 1.2
-        for name, vertices, indices, group in self._meshes:
+        yaw_c, yaw_s = math.cos(self._yaw), math.sin(self._yaw)
+        pitch_c, pitch_s = math.cos(self._pitch), math.sin(self._pitch)
+        rotation = np.array([
+            [yaw_c, 0.0, -yaw_s],
+            [pitch_s * yaw_s, pitch_c, pitch_s * yaw_c],
+            [pitch_c * yaw_s, -pitch_s, pitch_c * yaw_c],
+        ], dtype=np.float32)
+        for vertices, indices, group in self._meshes:
+            if group not in groups:
+                continue
             posed = vertices.copy()
             if group in ("jaw", "teeth"):
                 pivot = np.array([0.0, 1.3, 0.0], dtype=np.float32)
                 relative = posed - pivot
-                angle = self._jaw
+                angle = jaw_angle
                 y = relative[:, 1] * math.cos(angle) - relative[:, 2] * math.sin(angle)
                 z = relative[:, 1] * math.sin(angle) + relative[:, 2] * math.cos(angle)
                 relative[:, 1], relative[:, 2] = y, z
@@ -249,19 +316,49 @@ class RobotAvatar:
             elif group == "eyes":
                 centre_y = float(np.mean(posed[:, 1]))
                 posed[:, 1] = centre_y + (posed[:, 1] - centre_y) * (1.0 - 0.92 * self._blink)
-            points = []
-            for x, y, z in posed:
-                xx = x * math.cos(self._yaw) - z * math.sin(self._yaw)
-                zz = x * math.sin(self._yaw) + z * math.cos(self._yaw)
-                yy = y * math.cos(self._pitch) - zz * math.sin(self._pitch)
-                points.append(QPointF(cx + xx * scale, cy - yy * scale))
+            projected = posed @ rotation.T
+            xy = np.column_stack((cx + projected[:, 0] * scale,
+                                  cy - (projected[:, 1] - 1.2) * scale))
+            depth = projected[:, 2][indices].mean(axis=1)
+            order = np.argsort(depth)
             colour = QColor(self._colour if group == "eyes" else "#a5b6c4")
             if group == "wires":
                 colour = QColor("#d92f4d")
             colour.setAlpha(220 if self.quality == "high" else 185)
             painter.setBrush(QBrush(colour))
             painter.setPen(QPen(colour, 0.4))
-            for i in range(0, len(indices) - 2, 3):
-                tri = indices[i:i + 3]
-                if len(tri) == 3:
-                    painter.drawPolygon(QPolygonF([points[int(v)] for v in tri]))
+            for triangle in indices[order]:
+                painter.drawPolygon(QPolygonF([
+                    QPointF(float(xy[index, 0]), float(xy[index, 1]))
+                    for index in triangle
+                ]))
+
+    def paint(self, painter, cx: float, cy: float, radius: float, primary, accent, bg) -> None:
+        """Draw cached layers; only cheap Qt transforms happen per frame."""
+        from PyQt6.QtGui import QColor, QPainter
+
+        started = time.perf_counter()
+        painter.save()
+        painter.translate(cx, cy)
+        painter.rotate(-math.degrees(self._yaw))
+        painter.scale(radius / (self._cache_size * 0.42),
+                      radius / (self._cache_size * 0.42))
+        painter.translate(-self._cache_size / 2, -self._cache_size / 2)
+        painter.drawImage(0, 0, self._static_layer)
+        jaw = self._jaw_open_layer if self._jaw > JAW_MAX_RADIANS * 0.45 else self._jaw_layer
+        painter.drawImage(0, 0, jaw)
+
+        eye = self._eye_layer
+        if self._colour != "#5ee0ff":
+            tinted = eye.copy()
+            tint_painter = QPainter(tinted)
+            tint_painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceIn)
+            tint_painter.fillRect(tinted.rect(), QColor(self._colour))
+            tint_painter.end()
+            eye = tinted
+        painter.translate(self._cache_size / 2, self._cache_size / 2)
+        painter.scale(1.0, max(0.08, 1.0 - 0.92 * self._blink))
+        painter.translate(-self._cache_size / 2, -self._cache_size / 2)
+        painter.drawImage(0, 0, eye)
+        painter.restore()
+        self.note_frame_time(time.perf_counter() - started)
