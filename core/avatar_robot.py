@@ -237,8 +237,20 @@ class RobotAvatar:
         from PyQt6.QtGui import QColor, QPolygonF, QBrush, QPen
         scale = radius / 1.2
         for name, vertices, indices, group in self._meshes:
+            posed = vertices.copy()
+            if group in ("jaw", "teeth"):
+                pivot = np.array([0.0, 1.3, 0.0], dtype=np.float32)
+                relative = posed - pivot
+                angle = self._jaw
+                y = relative[:, 1] * math.cos(angle) - relative[:, 2] * math.sin(angle)
+                z = relative[:, 1] * math.sin(angle) + relative[:, 2] * math.cos(angle)
+                relative[:, 1], relative[:, 2] = y, z
+                posed = relative + pivot
+            elif group == "eyes":
+                centre_y = float(np.mean(posed[:, 1]))
+                posed[:, 1] = centre_y + (posed[:, 1] - centre_y) * (1.0 - 0.92 * self._blink)
             points = []
-            for x, y, z in vertices:
+            for x, y, z in posed:
                 xx = x * math.cos(self._yaw) - z * math.sin(self._yaw)
                 zz = x * math.sin(self._yaw) + z * math.cos(self._yaw)
                 yy = y * math.cos(self._pitch) - zz * math.sin(self._pitch)
