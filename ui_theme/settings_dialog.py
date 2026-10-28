@@ -11,7 +11,7 @@ from pathlib import Path
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QFont
 from PyQt6.QtWidgets import (
-    QCheckBox, QFrame, QHBoxLayout, QLabel, QPushButton, QVBoxLayout, QWidget,
+    QCheckBox, QComboBox, QFrame, QHBoxLayout, QLabel, QPushButton, QVBoxLayout, QWidget,
 )
 
 
@@ -59,6 +59,12 @@ class SettingsOverlay(QWidget):
         self._clock_24h_val = bool(cfg.get("clock_24h", False))
         self._reduce_anim_val = bool(cfg.get("reduce_animations", False))
         self._ask_before_acting_val = bool(cfg.get("ask_before_acting", False))
+        self._avatar_style_val = str(cfg.get("avatar_style", "robot")).lower()
+        if self._avatar_style_val not in ("robot", "classic", "off"):
+            self._avatar_style_val = "robot"
+        self._head_quality_val = str(cfg.get("head_quality", "high")).lower()
+        if self._head_quality_val not in ("high", "low"):
+            self._head_quality_val = "high"
 
         lay = QVBoxLayout(self)
         lay.setContentsMargins(20, 16, 20, 16)
@@ -147,6 +153,24 @@ class SettingsOverlay(QWidget):
         about_lbl.setStyleSheet(f"color: {C.TEXT_DIM}; background: transparent; letter-spacing: 1px;")
         lay.addWidget(about_lbl)
 
+        avatar_lbl = QLabel("AVATAR")
+        avatar_lbl.setFont(QFont("Segoe UI", 8, QFont.Weight.Bold))
+        avatar_lbl.setStyleSheet(f"color: {C.TEXT_DIM}; background: transparent; letter-spacing: 1px;")
+        lay.addWidget(avatar_lbl)
+        self._avatar_combo = QComboBox()
+        self._avatar_combo.addItem("Robot head", "robot")
+        self._avatar_combo.addItem("Classic head", "classic")
+        self._avatar_combo.addItem("Off", "off")
+        self._avatar_combo.setCurrentIndex(max(0, self._avatar_combo.findData(self._avatar_style_val)))
+        self._avatar_combo.currentIndexChanged.connect(self._on_avatar_changed)
+        lay.addWidget(self._avatar_combo)
+        self._quality_combo = QComboBox()
+        self._quality_combo.addItem("Head quality: High", "high")
+        self._quality_combo.addItem("Head quality: Low", "low")
+        self._quality_combo.setCurrentIndex(max(0, self._quality_combo.findData(self._head_quality_val)))
+        self._quality_combo.currentIndexChanged.connect(self._on_quality_changed)
+        lay.addWidget(self._quality_combo)
+
         ver_lbl = QLabel(f"Personal Assistant — {APP_VERSION}")
         ver_lbl.setFont(QFont("Segoe UI", 9, QFont.Weight.Bold))
         ver_lbl.setStyleSheet(f"color: {C.TEXT}; background: transparent;")
@@ -157,6 +181,11 @@ class SettingsOverlay(QWidget):
         credit_lbl.setFont(QFont("Segoe UI", 8))
         credit_lbl.setStyleSheet(f"color: {C.TEXT_MED}; background: transparent;")
         lay.addWidget(credit_lbl)
+        model_credit = QLabel("Robot head model by abhijithsajikumarsvtm, CC BY 4.0, modified")
+        model_credit.setFont(QFont("Segoe UI", 8))
+        model_credit.setWordWrap(True)
+        model_credit.setStyleSheet(f"color: {C.TEXT_MED}; background: transparent;")
+        lay.addWidget(model_credit)
 
         lay.addSpacing(8)
 
@@ -201,6 +230,16 @@ class SettingsOverlay(QWidget):
         self._ask_before_acting_val = checked
         self._persist(ask_before_acting=checked)
         self.settings_changed.emit({"clock_24h": self._clock_24h_val, "reduce_animations": self._reduce_anim_val, "ask_before_acting": checked})
+
+    def _on_avatar_changed(self, _index: int) -> None:
+        self._avatar_style_val = str(self._avatar_combo.currentData())
+        self._persist(avatar_style=self._avatar_style_val)
+        self.settings_changed.emit({"avatar_style": self._avatar_style_val, "head_quality": self._head_quality_val})
+
+    def _on_quality_changed(self, _index: int) -> None:
+        self._head_quality_val = str(self._quality_combo.currentData())
+        self._persist(head_quality=self._head_quality_val)
+        self.settings_changed.emit({"avatar_style": self._avatar_style_val, "head_quality": self._head_quality_val})
 
     def _close(self) -> None:
         self.hide()

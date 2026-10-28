@@ -47,6 +47,10 @@ try:
     from core.avatar import HoloAvatar
 except Exception:      # pragma: no cover — HUD must never die over cosmetics
     HoloAvatar = None
+try:
+    from core.avatar_robot import RobotAvatar
+except Exception:      # pragma: no cover — classic head remains available
+    RobotAvatar = None
 
 
 def _base_dir() -> Path:
@@ -92,27 +96,27 @@ _OS = platform.system()  # "Windows" | "Darwin" | "Linux"
 
 
 class C:
-    BG        = "#07040f"
-    PANEL     = "#0d0818"
-    PANEL2    = "#130b24"
-    BORDER    = "#2a1a4a"
-    BORDER_B  = "#3d2a6b"
-    BORDER_A  = "#2a1a4a"
-    PRI       = "#a78bfa"
-    PRI_DIM   = "#6d4fc2"
-    PRI_GHO   = "#1b1236"
-    ACC       = "#f472b6"
-    ACC2      = "#67e8f9"
+    BG        = "#050506"
+    PANEL     = "#0b0b0d"
+    PANEL2    = "#111115"
+    BORDER    = "#1f1f24"
+    BORDER_B  = "#303038"
+    BORDER_A  = "#1f1f24"
+    PRI       = "#5ee0ff"
+    PRI_DIM   = "#2f8aa2"
+    PRI_GHO   = "#102b33"
+    ACC       = "#5ee0ff"
+    ACC2      = "#ffb347"
     GREEN     = "#3ddc97"
     GREEN_D   = "#229966"
     RED       = "#ff5c7a"
     MUTED_C   = "#ff5c7a"
-    TEXT      = "#ece6ff"
-    TEXT_DIM  = "#8576b3"
-    TEXT_MED  = "#b3a3e6"
-    WHITE     = "#f5f3ff"
-    DARK      = "#090514"
-    BAR_BG    = "#130b24"
+    TEXT      = "#e8e8ec"
+    TEXT_DIM  = "#8b8b95"
+    TEXT_MED  = "#b8b8c2"
+    WHITE     = "#f7f7fa"
+    DARK      = "#070709"
+    BAR_BG    = "#0b0b0d"
 
 
 # Keys tied to the accent colour — status colours (ACC, GREEN, RED…) stay fixed
@@ -425,7 +429,20 @@ class HudCanvas(QWidget):
         # The holographic head that fills the HUD. If it could not be imported
         # we fall back to the old glowing core so the panel is never empty.
         self._avatar = None
-        if HoloAvatar is not None:
+        self._avatar_kind = "classic"
+        try:
+            from memory.config_manager import load_api_keys
+            avatar_style = str(load_api_keys().get("avatar_style", "robot")).lower()
+            quality = str(load_api_keys().get("head_quality", "high")).lower()
+        except Exception:
+            avatar_style, quality = "robot", "high"
+        if avatar_style == "robot" and RobotAvatar is not None:
+            try:
+                self._avatar = RobotAvatar(quality=quality)
+                self._avatar_kind = "robot"
+            except (FileNotFoundError, OSError, ValueError, KeyError) as exc:
+                print(f"Robot avatar unavailable; using classic head: {exc}")
+        if self._avatar is None and HoloAvatar is not None:
             try:
                 self._avatar = HoloAvatar()
             except Exception:
@@ -439,6 +456,8 @@ class HudCanvas(QWidget):
             self.hud_style = get_hud_style()
         except Exception:
             self.hud_style = "face"
+        if avatar_style == "off":
+            self.hud_style = "core"
         self._core_phase = 0.0
 
         self._tick       = 0
@@ -475,6 +494,26 @@ class HudCanvas(QWidget):
         self._tmr = QTimer(self)
         self._tmr.timeout.connect(self._step)
         self._tmr.start(16)
+
+    def set_avatar_settings(self, style: str, quality: str = "high") -> None:
+        """Apply avatar selection without restarting the window."""
+        style = str(style or "robot").lower()
+        if style == "off":
+            self.hud_style = "core"
+            return
+        self.hud_style = "face"
+        if style == self._avatar_kind and not (style == "robot" and quality):
+            return
+        if style == "robot" and RobotAvatar is not None:
+            try:
+                self._avatar = RobotAvatar(quality=quality)
+                self._avatar_kind = "robot"
+                return
+            except (FileNotFoundError, OSError, ValueError, KeyError) as exc:
+                print(f"Robot avatar unavailable; using classic head: {exc}")
+        if HoloAvatar is not None:
+            self._avatar = HoloAvatar()
+            self._avatar_kind = "classic"
 
     def glance(self, dx: float, dy: float, hold: float = 1.1) -> None:
         """Ask the avatar to look somewhere for a moment (see HoloAvatar.glance)."""
@@ -3695,6 +3734,8 @@ class MainWindow(QMainWindow):
     def _on_settings_changed(self, new_cfg: dict):
         self._clock_24h = new_cfg.get("clock_24h", False)
         self._reduce_animations = new_cfg.get("reduce_animations", False)
+        if "avatar_style" in new_cfg:
+            self.hud.set_avatar_settings(new_cfg["avatar_style"], new_cfg.get("head_quality", "high"))
         self._tick_clock()
         if self._reduce_animations:
             if hasattr(self, "_anim_timer") and self._anim_timer.isActive():

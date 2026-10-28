@@ -1,0 +1,7 @@
+Robo_face (clean up 3d model)
+
+Author: abhijithsajikumarsvtm
+License: CC BY 4.0
+Source: https://sketchfab.com/3d-models/robo-face-clean-up-3d-model-490bf64cf5144f4b83947a83679590df
+
+This repository uses a modified copy as the Mark-LIV robot-head avatar.
