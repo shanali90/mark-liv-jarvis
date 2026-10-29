@@ -89,3 +89,8 @@ The work machine for this pass is Linux without PyQt6, sounddevice, google-genai
 - "Kill-switch activated" fired with nothing running: the pending flag stayed True forever after the first confirmation question. It now expires after 60 s and clears when an action starts.
 - Desktop was `Path.home()/"Desktop"`, wrong when Windows/OneDrive redirects it, so files and folders were created in a folder the user never sees while JARVIS said "created". New `core/paths.py` asks Windows for the real folder; create_folder now reports the full path and "already existed". Screenshots saved to "desktop/..." no longer land inside the project folder.
 - Server GoAway (session time limit) is now handled by reconnecting immediately with the saved conversation, instead of waiting for the 1008 close.
+- Robot face and voice diagnostics: the GLB renderer used one flat material and ignored
+  emotion updates, while audio failures and successful playback were not visible in the
+  activity log. Added cached key/fill face shading, state-driven motion and jaw poses,
+  plus one-time audio device, PCM, playback, and failure log lines. Tested by
+  `tests/test_robot_avatar.py` and the targeted audio playback tests.

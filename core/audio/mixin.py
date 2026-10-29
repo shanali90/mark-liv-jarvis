@@ -577,6 +577,7 @@ class AudioMixin:
 
         _spk_name = get_output_device()
         _spk_dev  = audio_devices.resolve(_spk_name, "output")
+        self.ui.write_log(f"SYS: Audio output: {_spk_name or 'system default'}")
         if _spk_dev is not None:
             print(f"[JARVIS] 🔊 Output device: {_spk_name}")
 
@@ -601,12 +602,19 @@ class AudioMixin:
                 raise
             print(f"[JARVIS] ⚠️  Output device '{_spk_name}' failed: {_e} — using default")
             self.ui.write_log(f"SYS: Speaker '{_spk_name}' unavailable — using system default.")
-            stream = _open_spk(None)
+            try:
+                stream = _open_spk(None)
+            except Exception as fallback_error:
+                self.ui.write_log(f"ERROR: Audio output failed: {fallback_error}")
+                raise
 
         # Ask the device how far behind the speakers actually are, rather than
         # assuming. This is what the echo tail is sized from, so a machine with a
         # large audio buffer gets a correspondingly longer guard — and one with a
         # tiny buffer is not penalised with a delay it does not need.
+        analysis_error_logged = False
+        first_pcm_logged = False
+        first_play_logged = False
         try:
             lat = float(getattr(stream, "latency", 0.0) or 0.0)
             if 0.0 < lat < 1.0:
@@ -634,6 +642,9 @@ class AudioMixin:
                     continue
 
                 self.set_speaking(True)
+                if not first_pcm_logged:
+                    self.ui.write_log(f"SYS: TTS PCM received ({len(chunk)} bytes).")
+                    first_pcm_logged = True
 
                 # Batch all immediately-available chunks into one write to reduce
                 # thread-pool round-trips (was one asyncio.to_thread per 50ms slice).
@@ -692,15 +703,24 @@ class AudioMixin:
                         self.ui.set_audio_level(lvl)
                         self._out_level = lvl
                         self._echo.note_output(pcm, RECEIVE_SAMPLE_RATE, lvl)
-                except Exception:
-                    pass
+                except Exception as analysis_error:
+                    if not analysis_error_logged:
+                        self.ui.write_log(f"ERROR: Audio analysis failed: {analysis_error}")
+                        analysis_error_logged = True
 
                 try:
                     await asyncio.to_thread(stream.write, bytes(batch))
+                    if not first_play_logged:
+                        self.ui.write_log("SYS: TTS audio played.")
+                        first_play_logged = True
                 except (RuntimeError, asyncio.CancelledError):
                     break   # executor shutting down — exit cleanly
+                except Exception as playback_error:
+                    self.ui.write_log(f"ERROR: TTS playback failed: {playback_error}")
+                    raise
         except Exception as e:
             print(f"[JARVIS] ❌ Play: {e}")
+            self.ui.write_log(f"ERROR: TTS stopped: {e}")
             raise
         finally:
             self.set_speaking(False)

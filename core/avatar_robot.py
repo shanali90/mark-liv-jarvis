@@ -156,6 +156,7 @@ class RobotAvatar:
         self._blink = 0.0
         self._next_blink = random.uniform(3.0, 7.0)
         self._state = "LISTENING"
+        self._expression = "neutral"
         self._colour = EYE_COLOURS["LISTENING"]
         self._yaw = self._pitch = 0.0
         self._glance = None
@@ -163,10 +164,14 @@ class RobotAvatar:
         self._last_frame_seconds = 0.0
         self._slow_frames = 0
         self._fallback_requested = False
+        self._lighting_key = np.array([-0.35, 0.7, 0.65], dtype=np.float32)
+        self._lighting_fill = np.array([0.55, 0.2, 0.35], dtype=np.float32)
         self._cache_size = 480
         self._static_layer = self._render_layer({"head", "neck", "spine", "wires"}, 0.0)
-        self._jaw_layer = self._render_layer({"jaw", "teeth"}, 0.0)
-        self._jaw_open_layer = self._render_layer({"jaw", "teeth"}, JAW_MAX_RADIANS)
+        self._jaw_layers = [
+            self._render_layer({"jaw", "teeth"}, JAW_MAX_RADIANS * fraction)
+            for fraction in (0.0, 0.25, 0.5, 0.75, 1.0)
+        ]
         self._eye_layer = self._render_layer({"eyes"}, 0.0)
 
     def _load_meshes(self) -> list[tuple[str, np.ndarray, np.ndarray, str]]:
@@ -212,13 +217,27 @@ class RobotAvatar:
     def eye_colour(self) -> str:
         return self._colour
 
-    def set_emotion(self, *args, **kwargs) -> None:
-        return None
+    def set_emotion(self, joy: float = 0.0, anger: float = 0.0,
+                    shyness: float = 0.0, curiosity: float = 0.0,
+                    neutral: float = 1.0) -> None:
+        values = {
+            "happy": float(joy),
+            "thinking": float(curiosity),
+            "surprised": float(anger),
+            "listening": float(shyness),
+            "neutral": float(neutral),
+        }
+        self._expression = max(values, key=values.get)
 
     def set_emotion_from_text(self, text: str) -> None:
-        if any(word in str(text).lower() for word in ("error", "failed", "offline")):
+        lowered = str(text).lower()
+        if any(word in lowered for word in ("error", "failed", "offline")):
             self._state = "ERROR"
             self._colour = EYE_COLOURS["ERROR"]
+        elif any(word in lowered for word in ("happy", "great", "glad")):
+            self._expression = "happy"
+        elif any(word in lowered for word in ("think", "consider")):
+            self._expression = "thinking"
 
     def glance(self, dx: float, dy: float, hold: float = 1.1) -> None:
         self._glance = (max(-1.0, min(1.0, float(dx))), max(-1.0, min(1.0, float(dy))),
@@ -249,6 +268,14 @@ class RobotAvatar:
         self._time += dt
         self._state = "SLEEPING" if muted else str(state or "LISTENING").upper()
         self._colour = EYE_COLOURS.get(self._state, "#5ee0ff")
+        if self._state in ("THINKING", "PROCESSING"):
+            self._expression = "thinking"
+        elif self._state == "SPEAKING":
+            self._expression = "happy" if amp > 0.55 else "neutral"
+        elif self._state == "LISTENING":
+            self._expression = "listening"
+        elif self._state in ("ERROR", "OFFLINE"):
+            self._expression = "surprised"
         target = clamp_jaw_angle((float(v_level if v_level is not None else amp) *
                                   (1.0 if v_open is None else max(0.0, float(v_open)))) *
                                  JAW_MAX_DEGREES) if speaking and self._state != "SLEEPING" else 0.0
@@ -269,12 +296,14 @@ class RobotAvatar:
             self._pitch = self._glance[1] * math.radians(12)
         else:
             self._glance = None
-            self._yaw = math.sin(self._time * 0.37) * math.radians(1.0)
-            self._pitch = math.cos(self._time * 0.29) * math.radians(1.0)
+            if self._state == "SLEEPING":
+                self._yaw = 0.0
+                self._pitch = -math.radians(4)
+            else:
+                self._yaw = math.sin(self._time * 0.37) * math.radians(1.0)
+                self._pitch = math.cos(self._time * 0.29) * math.radians(1.0)
             if self._state == "THINKING":
                 self._pitch += math.radians(3)
-            elif self._state == "SLEEPING":
-                self._pitch -= math.radians(4)
 
     def _render_layer(self, groups: set[str], jaw_angle: float):
         from PyQt6.QtGui import QImage, QPainter, QColor, QBrush, QPen, QPolygonF
@@ -321,13 +350,40 @@ class RobotAvatar:
                                   cy - (projected[:, 1] - 1.2) * scale))
             depth = projected[:, 2][indices].mean(axis=1)
             order = np.argsort(depth)
-            colour = QColor(self._colour if group == "eyes" else "#a5b6c4")
-            if group == "wires":
-                colour = QColor("#d92f4d")
-            colour.setAlpha(220 if self.quality == "high" else 185)
-            painter.setBrush(QBrush(colour))
-            painter.setPen(QPen(colour, 0.4))
-            for triangle in indices[order]:
+            triangles = posed[indices]
+            normals = np.cross(triangles[:, 1] - triangles[:, 0],
+                               triangles[:, 2] - triangles[:, 0])
+            lengths = np.linalg.norm(normals, axis=1)
+            normals = normals / np.maximum(lengths[:, None], 1e-6)
+            lighting = np.clip(
+                np.maximum(0.0, normals @ self._lighting_key) * 0.75
+                + np.maximum(0.0, normals @ self._lighting_fill) * 0.25,
+                0.0, 1.0,
+            )
+            base = {
+                "head": (118, 145, 164),
+                "jaw": (103, 128, 148),
+                "teeth": (210, 220, 220),
+                "neck": (76, 96, 112),
+                "spine": (61, 76, 90),
+                "wires": (177, 37, 61),
+                "eyes": QColor(self._colour),
+            }.get(group, (118, 145, 164))
+            if group == "eyes":
+                painter.setBrush(QBrush(base))
+                painter.setPen(QPen(base, 0.4))
+            for triangle, light in zip(indices[order], lighting[order]):
+                if group != "eyes":
+                    r, g, b = base
+                    factor = 0.52 + 0.48 * float(light)
+                    colour = QColor(
+                        min(255, int(r * factor)),
+                        min(255, int(g * factor)),
+                        min(255, int(b * factor)),
+                        220 if self.quality == "high" else 185,
+                    )
+                    painter.setBrush(QBrush(colour))
+                    painter.setPen(QPen(colour, 0.4))
                 painter.drawPolygon(QPolygonF([
                     QPointF(float(xy[index, 0]), float(xy[index, 1]))
                     for index in triangle
@@ -341,11 +397,16 @@ class RobotAvatar:
         painter.save()
         painter.translate(cx, cy)
         painter.rotate(-math.degrees(self._yaw))
+        painter.translate(0, math.sin(self._time * 0.8) * 2.0
+                          if self._state != "SLEEPING" else 0.0)
         painter.scale(radius / (self._cache_size * 0.42),
                       radius / (self._cache_size * 0.42))
         painter.translate(-self._cache_size / 2, -self._cache_size / 2)
         painter.drawImage(0, 0, self._static_layer)
-        jaw = self._jaw_open_layer if self._jaw > JAW_MAX_RADIANS * 0.45 else self._jaw_layer
+        jaw_index = min(4, max(0, int(round(
+            self._jaw / JAW_MAX_RADIANS * 4
+        ))))
+        jaw = self._jaw_layers[jaw_index]
         painter.drawImage(0, 0, jaw)
 
         eye = self._eye_layer

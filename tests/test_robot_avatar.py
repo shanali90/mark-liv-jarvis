@@ -3,6 +3,7 @@ import time
 from pathlib import Path
 
 import pytest
+import numpy as np
 
 from core.avatar_robot import (
     EYE_COLOURS,
@@ -69,3 +70,26 @@ def test_robot_fallback_triggers_after_slow_frames():
     for _ in range(avatar.SLOW_FRAME_LIMIT):
         avatar.note_frame_time(0.034)
     assert avatar.fallback_requested
+
+
+def test_robot_emotion_and_sleep_motion_are_not_noops():
+    avatar = RobotAvatar()
+    avatar.set_emotion(joy=1.0, neutral=0.0)
+    assert avatar._expression == "happy"
+    avatar.step(1 / 60, 0.0, state="SLEEPING", muted=True)
+    yaw, pitch = avatar._yaw, avatar._pitch
+    avatar.step(1 / 60, 0.0, state="SLEEPING", muted=True)
+    assert avatar.blink_amount == 0.0
+    assert avatar._yaw == yaw
+    assert avatar._pitch == pitch
+
+
+def test_robot_materials_use_non_uniform_lighting():
+    avatar = RobotAvatar()
+    vertices, indices, _ = avatar._meshes[0]
+    triangles = vertices[indices]
+    normals = np.cross(triangles[:, 1] - triangles[:, 0],
+                       triangles[:, 2] - triangles[:, 0])
+    normals /= np.maximum(np.linalg.norm(normals, axis=1)[:, None], 1e-6)
+    lighting = np.clip(normals @ avatar._lighting_key, 0.0, 1.0)
+    assert float(np.ptp(lighting)) > 0.0
